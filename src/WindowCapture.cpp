@@ -7,13 +7,13 @@
 #include <algorithm>
 #include <cstring>
 #include <iomanip>
+#include <iterator>
 #include <sstream>
 
 using Microsoft::WRL::ComPtr;
-using namespace winrt;
-using namespace Windows::Graphics::Capture;
-using namespace Windows::Graphics::DirectX;
-using namespace Windows::Graphics::DirectX::Direct3D11;
+namespace capture = winrt::Windows::Graphics::Capture;
+namespace directx = winrt::Windows::Graphics::DirectX;
+namespace d3d11rt = winrt::Windows::Graphics::DirectX::Direct3D11;
 
 WindowCapture::~WindowCapture()
 {
@@ -85,26 +85,26 @@ bool WindowCapture::CreateDevices()
         return false;
     }
 
-    com_ptr<IInspectable> inspectable;
+    winrt::com_ptr<IInspectable> inspectable;
     hr = CreateDirect3D11DeviceFromDXGIDevice(dxgiDevice.Get(), inspectable.put());
     if (FAILED(hr)) {
         SetError(L"Unable to create the WinRT Direct3D device", hr);
         return false;
     }
 
-    winrtDevice_ = inspectable.as<IDirect3DDevice>();
+    winrtDevice_ = inspectable.as<d3d11rt::IDirect3DDevice>();
     return true;
 }
 
 bool WindowCapture::CreateCaptureItem(HWND hwnd)
 {
     try {
-        auto interop = get_activation_factory<GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
+        auto interop = winrt::get_activation_factory<capture::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
         check_hresult(interop->CreateForWindow(
             hwnd,
-            guid_of<GraphicsCaptureItem>(),
-            put_abi(item_)));
-    } catch (const hresult_error& error) {
+            winrt::guid_of<capture::GraphicsCaptureItem>(),
+            winrt::put_abi(item_)));
+    } catch (const winrt::hresult_error& error) {
         SetError(L"Windows Graphics Capture could not attach to the browser window", error.code());
         return false;
     }
@@ -126,9 +126,9 @@ bool WindowCapture::Start(HWND hwnd)
             return false;
         }
 
-        framePool_ = Direct3D11CaptureFramePool::CreateFreeThreaded(
+        framePool_ = capture::Direct3D11CaptureFramePool::CreateFreeThreaded(
             winrtDevice_,
-            DirectXPixelFormat::B8G8R8A8UIntNormalized,
+            directx::DirectXPixelFormat::B8G8R8A8UIntNormalized,
             2,
             size);
 
@@ -142,7 +142,7 @@ bool WindowCapture::Start(HWND hwnd)
         session_.StartCapture();
         sequence_ = 0;
         return true;
-    } catch (const hresult_error& error) {
+    } catch (const winrt::hresult_error& error) {
         SetError(L"Unable to start Windows Graphics Capture", error.code());
         Stop();
         return false;
@@ -245,7 +245,7 @@ bool WindowCapture::TryGetLatest(CapturedFrame& out)
     if (!framePool_) return false;
 
     try {
-        Direct3D11CaptureFrame newest{nullptr};
+        capture::Direct3D11CaptureFrame newest{nullptr};
         std::uint32_t drained = 0;
 
         for (;;) {
@@ -258,7 +258,7 @@ bool WindowCapture::TryGetLatest(CapturedFrame& out)
 
         if (!newest) return false;
 
-        auto access = newest.Surface().as<IDirect3DDxgiInterfaceAccess>();
+        auto access = newest.Surface().as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
         ComPtr<ID3D11Texture2D> texture;
         const HRESULT hr = access->GetInterface(IID_PPV_ARGS(texture.ReleaseAndGetAddressOf()));
         if (FAILED(hr)) {
@@ -272,7 +272,7 @@ bool WindowCapture::TryGetLatest(CapturedFrame& out)
         frame.drainedFrames = std::max<std::uint32_t>(1, drained);
         out = std::move(frame);
         return true;
-    } catch (const hresult_error& error) {
+    } catch (const winrt::hresult_error& error) {
         SetError(L"Windows Graphics Capture failed while receiving a frame", error.code());
         return false;
     }
