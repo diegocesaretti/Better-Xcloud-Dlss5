@@ -207,6 +207,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     }
 
     liveLog << "capture=" << frame.width << "x" << frame.height << "\n";
+    const bool localNgxUnderscore = std::filesystem::exists(ModuleDirectory() / L"_nvngx.dll");
+    const bool localNgxPlain = std::filesystem::exists(ModuleDirectory() / L"nvngx.dll");
+    liveLog << "localNgxUnderscore=" << (localNgxUnderscore ? 1 : 0)
+            << " localNgxPlain=" << (localNgxPlain ? 1 : 0) << "\n";
     liveLog.flush();
 
     HWND overlay = CreateOverlay(browser.visualBounds);
@@ -235,10 +239,21 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             false) ||
         !renderer->DLSSAvailable()) {
 
-        ErrorBox(
-            L"The DLSS carrier could not initialize. This can mean an unsupported "
-            L"GPU/driver, a missing runtime file, or a runtime compatibility failure." +
-            RuntimeLogHint());
+        std::wstring carrierError =
+            L"The DLSS carrier could not initialize.";
+        if (!localNgxUnderscore && !localNgxPlain) {
+            carrierError +=
+                L"\n\nNo local _nvngx.dll / nvngx.dll override was found. "
+                L"On the experimental GTX 16-series path, reinstall by dragging "
+                L"the known-good compatibility ZIP onto Install.cmd so the local "
+                L"NGX core from that pack is staged before DriverStore is used.";
+        } else {
+            carrierError +=
+                L"\n\nA local NGX core override is present, so inspect the NGX "
+                L"and ReShade logs for the next compatibility gate.";
+        }
+        carrierError += RuntimeLogHint();
+        ErrorBox(carrierError);
         if (overlay) DestroyWindow(overlay);
         return 15;
     }
