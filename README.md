@@ -48,6 +48,25 @@ The installer downloads the upstream DLSS5 Video Player runtime directly from it
 
 Better xCloud itself is intentionally obtained from its official project instead of being silently repackaged.
 
+### GTX / Turing compatibility pack
+
+For the GTX 1660 test path, the installer can overlay a **known-good compatibility ZIP supplied by the user** without redistributing those proprietary/community runtime binaries from this repository.
+
+Two beginner-friendly options are supported:
+
+1. Put a single ZIP named like `GTX1660*.zip`, `compat*.zip` or `drive-download*.zip` beside `Install.cmd`, then double-click `Install.cmd`.
+2. Drag the known-good compatibility ZIP onto `Install.cmd`.
+
+The importer only replaces an allowlist of local runtime files: `_nvngx.dll`, `nvngx.dll`, `nvngx_dlss.dll`, `nvngx_dlssnr.dll`, `renodx-dlss5.addon64`, `dxgi.dll`, and `ReShade.ini`. It never copies driver/system DLLs such as `nvapi64.dll` or `nvofapi64.dll`.
+
+A full inventory and SHA-256 report is written to:
+
+```text
+%LOCALAPPDATA%\BetterXcloudDLSS5\COMPATIBILITY_PACK_INFO.txt
+```
+
+A local `_nvngx.dll` / `nvngx.dll` is important for the current GTX experiment because NVIDIA NGX probes beside the executable before falling back to DriverStore.
+
 ## Hardware
 
 The upstream DLSS5 Video Player officially documents RTX-class hardware. **GTX 1660 / 1660 Super support in this project is experimental** and depends on the same community compatibility method being tested by the project owner. We do not hard-block non-RTX Turing cards; the host attempts initialization and reports the actual runtime result.
