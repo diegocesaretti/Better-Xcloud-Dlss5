@@ -13,6 +13,8 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <string>
 #include <thread>
 
@@ -177,6 +179,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return 11;
     }
 
+    std::ofstream liveLog(
+        ModuleDirectory() / L"XCloudDLSS5-live.log",
+        std::ios::out | std::ios::trunc);
+    liveLog << "Better Xcloud DLSS5 live session\n";
+    liveLog << "browserProcess=";
+    for (wchar_t ch : browser.processName) liveLog << (ch <= 0x7f ? char(ch) : '?');
+    liveLog << " title=";
+    for (wchar_t ch : browser.title) liveLog << (ch <= 0x7f ? char(ch) : '?');
+    liveLog << "\n";
+    liveLog.flush();
+
     WindowCapture capture;
     if (!capture.Start(browser.hwnd)) {
         ErrorBox(capture.LastError());
@@ -192,6 +205,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ErrorBox(reason);
         return 13;
     }
+
+    liveLog << "capture=" << frame.width << "x" << frame.height << "\n";
+    liveLog.flush();
 
     HWND overlay = CreateOverlay(browser.visualBounds);
     if (!overlay) {
@@ -227,6 +243,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return 15;
     }
 
+    liveLog << "renderer=initialized dlssAvailable=1\n";
+    liveLog.flush();
+
     TemporalGuideGenerator guides;
     bool overlayEnabled = true;
     bool running = true;
@@ -236,6 +255,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     const auto ptsOrigin = std::chrono::steady_clock::now();
     auto previousFrameTime = ptsOrigin;
     auto nextPositionSync = ptsOrigin;
+    auto statsWindowStart = ptsOrigin;
+    std::uint64_t statsInputFrames = 0;
+    std::uint64_t statsRenderedFrames = 0;
+    std::uint64_t statsDroppedFrames = 0;
+    double statsProcessingMs = 0.0;
 
     while (running && IsWindow(browser.hwnd)) {
         MSG msg{};
@@ -305,12 +329,19 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             id.historyGeneration = guides.HistoryGeneration();
         }
 
+        ++statsInputFrames;
+        if (latest.drainedFrames > 1) {
+            statsDroppedFrames += static_cast<std::uint64_t>(latest.drainedFrames - 1);
+        }
+
         GuideFrame guide;
         const float frameTimeMs = static_cast<float>(std::clamp(
             std::chrono::duration<double, std::milli>(
                 latest.capturedAt - previousFrameTime).count(),
             1.0,
             100.0));
+
+        const auto processingStarted = std::chrono::steady_clock::now();
 
         const bool guideOk = guides.Generate(
             latest.bgra.data(),
@@ -332,6 +363,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 guide,
                 frameTimeMs);
 
+        const auto processingEnded = std::chrono::steady_clock::now();
+        statsProcessingMs += std::chrono::duration<double, std::milli>(
+            processingEnded - processingStarted).count();
+        if (renderOk) ++statsRenderedFrames;
+
         if (!renderOk) {
             if (renderer->GpuUnusable()) {
                 ErrorBox(
@@ -349,7 +385,38 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         previousFrameTime = latest.capturedAt;
         lastSequence = latest.sequence;
         frame = std::move(latest);
+
+        const auto statsNow = std::chrono::steady_clock::now();
+        const double statsSeconds =
+            std::chrono::duration<double>(statsNow - statsWindowStart).count();
+        if (statsSeconds >= 2.0) {
+            const double fps = statsSeconds > 0.0
+                ? static_cast<double>(statsRenderedFrames) / statsSeconds
+                : 0.0;
+            const double avgMs = statsInputFrames
+                ? statsProcessingMs / static_cast<double>(statsInputFrames)
+                : 0.0;
+
+            liveLog << std::fixed << std::setprecision(2)
+                    << "fps=" << fps
+                    << " avgProcessingMs=" << avgMs
+                    << " neuralGpuMs=" << renderer->LastNeuralGpuMs()
+                    << " droppedCaptureFrames=" << statsDroppedFrames
+                    << " peakVramMiB=" << renderer->PeakLocalVideoMemoryMiB()
+                    << " evaluations=" << renderer->DLSSEvaluations()
+                    << "\n";
+            liveLog.flush();
+
+            statsWindowStart = statsNow;
+            statsInputFrames = 0;
+            statsRenderedFrames = 0;
+            statsDroppedFrames = 0;
+            statsProcessingMs = 0.0;
+        }
     }
+
+    liveLog << "session=ended\n";
+    liveLog.flush();
 
     ShowWindow(overlay, SW_HIDE);
     renderer.reset();
