@@ -1,0 +1,86 @@
+name: Build Windows alpha
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout bridge
+        uses: actions/checkout@v4
+
+      - name: Fetch pinned DLSS5 Video Player source
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path external -Force | Out-Null
+          git clone --depth 1 --branch dlss5-video-player-v0.24.0 https://github.com/2600th/dlss5-video-player.git external/dlss5-video-player
+
+      - name: Fetch pinned NVIDIA DLSS SDK
+        shell: pwsh
+        run: |
+          git init external/DLSS
+          git -C external/DLSS remote add origin https://github.com/NVIDIA/DLSS.git
+          git -C external/DLSS fetch --depth 1 origin a291cc7d2cc642a51566f3dfd5376f635cd1b284
+          git -C external/DLSS checkout --detach FETCH_HEAD
+
+      - name: Validate PowerShell scripts
+        shell: pwsh
+        run: |
+          $files = @(
+            'installer/Install.ps1',
+            'installer/Uninstall.ps1',
+            'launcher/Start-XCloud-DLSS5.ps1'
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file), [ref]$tokens, [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file : $($_.Message)" }
+              throw "PowerShell syntax validation failed for $file"
+            }
+          }
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build -A x64 -DDLSS5_UPSTREAM="$PWD/external/dlss5-video-player" -DDLSS_SDK="$PWD/external/DLSS"
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel
+
+      - name: Stage novice-friendly package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist/installer,dist/launcher -Force | Out-Null
+          Copy-Item build/Release/XCloudDLSS5Host.exe dist/
+          Copy-Item Install.cmd,Uninstall.cmd,README.md,THIRD_PARTY_NOTICES.md dist/
+          Copy-Item installer/Install.ps1,installer/Uninstall.ps1 dist/installer/
+          Copy-Item launcher/Start-XCloud-DLSS5.ps1 dist/launcher/
+          Copy-Item docs -Destination dist/docs -Recurse
+
+          if (-not (Test-Path dist/XCloudDLSS5Host.exe)) {
+            throw 'Host executable was not staged.'
+          }
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Better-Xcloud-DLSS5-win64
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
