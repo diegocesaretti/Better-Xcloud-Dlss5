@@ -25,6 +25,11 @@ jobs:
           New-Item -ItemType Directory -Path external -Force | Out-Null
           git clone --depth 1 --branch dlss5-video-player-v0.24.0 https://github.com/2600th/dlss5-video-player.git external/dlss5-video-player
 
+      - name: Apply Better Xcloud GTX/Turing carrier compatibility patch
+        shell: pwsh
+        run: |
+          git -C external/dlss5-video-player apply ../../patches/dlss5-video-player-gtx-carrier.patch
+
       - name: Fetch pinned NVIDIA DLSS SDK
         shell: pwsh
         run: |
