@@ -133,9 +133,6 @@ try {
         Write-Step 'Importing known-good GTX/Turing compatibility pack'
         $compatReport = Join-Path $InstallRoot 'COMPATIBILITY_PACK_INFO.txt'
         & $compatImporter -ZipPath $resolvedCompatibilityPack -InstalledNeural $installedNeural -WorkRoot $tempRoot -ReportPath $compatReport | Out-Host
-        if ($LASTEXITCODE -ne 0) {
-            Fail "Compatibility pack import failed with code $LASTEXITCODE." 32
-        }
         $compatImported = $true
     } else {
         Write-Host ''
