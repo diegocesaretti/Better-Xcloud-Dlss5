@@ -14,7 +14,7 @@ index 0223914..1111111 100644
 +            GetEnvironmentVariableW(
 +                L"BETTER_XCLOUD_DLSS5_ALLOW_UNSUPPORTED_SR",
 +                compat,
-+                static_cast<DWORD>(std::size(compat))) > 0
++                8) > 0
 +            && compat[0] == L'1';
 +        if (!allowUnsupportedCarrier) {
 +            LOG("NGX reports SuperSampling.Available=0; native DLSS SR is unavailable on this system/runtime.");
