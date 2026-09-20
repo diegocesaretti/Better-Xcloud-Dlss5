@@ -28,7 +28,34 @@ jobs:
       - name: Apply Better Xcloud GTX/Turing carrier compatibility patch
         shell: pwsh
         run: |
-          git -C external/dlss5-video-player apply ../../patches/dlss5-video-player-gtx-carrier.patch
+          $path = 'external/dlss5-video-player/src/DLSSBackend.cpp'
+          $text = [IO.File]::ReadAllText($path)
+          $old = @'
+              if (!NVSDK_NGX_FAILED(availResult) && !srAvailable) {
+                  LOG("NGX reports SuperSampling.Available=0; native DLSS SR is unavailable on this system/runtime.");
+                  return false;
+              }
+'@
+          $new = @'
+              if (!NVSDK_NGX_FAILED(availResult) && !srAvailable) {
+                  wchar_t compat[8]{};
+                  const bool allowUnsupportedCarrier =
+                      GetEnvironmentVariableW(
+                          L"BETTER_XCLOUD_DLSS5_ALLOW_UNSUPPORTED_SR",
+                          compat,
+                          8) > 0
+                      && compat[0] == L'1';
+                  if (!allowUnsupportedCarrier) {
+                      LOG("NGX reports SuperSampling.Available=0; native DLSS SR is unavailable on this system/runtime.");
+                      return false;
+                  }
+                  LOG("NGX reports SuperSampling.Available=0; continuing with the Better Xcloud experimental carrier path so the RenoDX raw-NGX hook can attempt interception.");
+              }
+'@
+          if (-not $text.Contains($old)) {
+            throw 'Pinned DLSSBackend.cpp no longer matches the expected GTX compatibility insertion point.'
+          }
+          [IO.File]::WriteAllText($path, $text.Replace($old, $new), [Text.UTF8Encoding]::new($false))
 
       - name: Fetch pinned NVIDIA DLSS SDK
         shell: pwsh
