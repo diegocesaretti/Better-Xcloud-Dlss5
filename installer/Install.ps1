@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'BetterXcloudDLSS5'),
+    [string]$CompatibilityPack = '',
     [switch]$NonInteractive
 )
 
@@ -22,6 +23,25 @@ function Fail([string]$Text, [int]$Code = 1) {
     exit $Code
 }
 
+function Resolve-CompatibilityPack([string]$ExplicitPath, [string]$PackageRoot) {
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
+        $resolved = Resolve-Path -LiteralPath $ExplicitPath -ErrorAction SilentlyContinue
+        if (-not $resolved) { Fail "Compatibility pack not found: $ExplicitPath" 30 }
+        return $resolved.Path
+    }
+
+    $candidates = @()
+    foreach ($pattern in @('GTX1660*.zip', 'compat*.zip', 'drive-download*.zip')) {
+        $candidates += @(Get-ChildItem -LiteralPath $PackageRoot -File -Filter $pattern -ErrorAction SilentlyContinue)
+    }
+    $candidates = @($candidates | Sort-Object FullName -Unique)
+    if ($candidates.Count -eq 1) { return $candidates[0].FullName }
+    if ($candidates.Count -gt 1) {
+        Write-Warning 'Multiple compatibility ZIPs were found beside Install.cmd; none was selected automatically.'
+    }
+    return ''
+}
+
 if (-not [Environment]::Is64BitOperatingSystem) {
     Fail 'Windows x64 is required.' 10
 }
@@ -34,12 +54,16 @@ if ($os.Major -lt 10) {
 $packageRoot = Split-Path -Parent $PSScriptRoot
 $hostExe = Join-Path $packageRoot 'XCloudDLSS5Host.exe'
 $launcherSource = Join-Path $packageRoot 'launcher\Start-XCloud-DLSS5.ps1'
+$compatImporter = Join-Path $PSScriptRoot 'Import-CompatibilityPack.ps1'
 
 if (-not (Test-Path -LiteralPath $hostExe)) {
     Fail "XCloudDLSS5Host.exe is missing. Use the packaged release/artifact, not GitHub's source-code ZIP." 12
 }
 if (-not (Test-Path -LiteralPath $launcherSource)) {
     Fail 'The launcher file is missing from the package.' 13
+}
+if (-not (Test-Path -LiteralPath $compatImporter)) {
+    Fail 'The compatibility-pack importer is missing from the package.' 14
 }
 
 Write-Host ''
@@ -55,6 +79,7 @@ $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('BetterXcloudDLSS5-' + [guid]:
 $zipPath = Join-Path $tempRoot 'dlss5-video-player.zip'
 $extractRoot = Join-Path $tempRoot 'extract'
 $runtimeDestination = Join-Path $InstallRoot 'Runtime'
+$resolvedCompatibilityPack = Resolve-CompatibilityPack $CompatibilityPack $packageRoot
 
 try {
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
@@ -103,6 +128,20 @@ try {
     $installedNeural = Join-Path $runtimeDestination 'neural-runtime'
     Copy-Item -LiteralPath $hostExe -Destination (Join-Path $installedNeural 'XCloudDLSS5Host.exe') -Force
 
+    $compatImported = $false
+    if (-not [string]::IsNullOrWhiteSpace($resolvedCompatibilityPack)) {
+        Write-Step 'Importing known-good GTX/Turing compatibility pack'
+        $compatReport = Join-Path $InstallRoot 'COMPATIBILITY_PACK_INFO.txt'
+        & $compatImporter -ZipPath $resolvedCompatibilityPack -InstalledNeural $installedNeural -WorkRoot $tempRoot -ReportPath $compatReport | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            Fail "Compatibility pack import failed with code $LASTEXITCODE." 32
+        }
+        $compatImported = $true
+    } else {
+        Write-Host ''
+        Write-Host 'No external GTX compatibility pack selected; using the pinned upstream runtime.' -ForegroundColor Yellow
+    }
+
     Write-Step 'Configuring RenoDX raw-NGX neural hook'
     $reshadeIni = Join-Path $installedNeural 'ReShade.ini'
     Add-Type -TypeDefinition @'
@@ -150,6 +189,8 @@ Installed: $(Get-Date -Format o)
 DLSS5 Video Player: $UpstreamVersion
 Upstream package SHA256: $UpstreamSha256
 Host source: https://github.com/diegocesaretti/Better-Xcloud-Dlss5
+Compatibility pack: $resolvedCompatibilityPack
+Compatibility pack imported: $compatImported
 "@ | Set-Content -LiteralPath (Join-Path $InstallRoot 'INSTALL_INFO.txt') -Encoding UTF8
 
     Write-Step 'Creating Start Menu shortcut'
