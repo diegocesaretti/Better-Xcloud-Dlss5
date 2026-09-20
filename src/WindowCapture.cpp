@@ -100,7 +100,7 @@ bool WindowCapture::CreateCaptureItem(HWND hwnd)
 {
     try {
         auto interop = winrt::get_activation_factory<capture::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
-        check_hresult(interop->CreateForWindow(
+        winrt::check_hresult(interop->CreateForWindow(
             hwnd,
             winrt::guid_of<capture::GraphicsCaptureItem>(),
             winrt::put_abi(item_)));
