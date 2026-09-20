@@ -59,6 +59,11 @@ Start-Process -FilePath $browser -ArgumentList @(
 
 Start-Sleep -Seconds 3
 
+# Allow the experimental raw-NGX carrier path to continue on GPUs where
+# NVIDIA's native DLSS-SR capability bit is unavailable. This does not enable
+# DLSS by itself; it only gives the local RenoDX hook a chance to intercept.
+$env:BETTER_XCLOUD_DLSS5_ALLOW_UNSUPPORTED_SR = '1'
+
 # Starting from neural-runtime is intentional: the upstream dxgi.dll,
 # RenoDX add-on and locked neural DLLs are local to this process only.
 Start-Process -FilePath $hostExe -WorkingDirectory $runtimeDir
