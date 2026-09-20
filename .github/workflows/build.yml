@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -77,10 +77,45 @@ jobs:
             throw 'Host executable was not staged.'
           }
 
+      - name: Create downloadable ZIP
+        shell: pwsh
+        run: |
+          $zip = 'Better-Xcloud-DLSS5-win64.zip'
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path dist\* -DestinationPath $zip -CompressionLevel Optimal
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $zip" | Set-Content -LiteralPath 'Better-Xcloud-DLSS5-win64.sha256' -Encoding ascii
+
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
           name: Better-Xcloud-DLSS5-win64
-          path: dist/
+          path: |
+            Better-Xcloud-DLSS5-win64.zip
+            Better-Xcloud-DLSS5-win64.sha256
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish rolling alpha release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view alpha-latest --repo "$env:GITHUB_REPOSITORY" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release delete alpha-latest --repo "$env:GITHUB_REPOSITORY" --yes --cleanup-tag
+          }
+
+          $notes = @(
+            'Early alpha build for real-hardware testing.',
+            '',
+            'Download Better-Xcloud-DLSS5-win64.zip, extract it, then double-click Install.cmd.',
+            '',
+            'The installer downloads the pinned DLSS5 Video Player neural runtime directly from its upstream release and verifies its SHA-256. That runtime is not redistributed here.',
+            '',
+            'GTX 1660 / 1660 Super support is experimental. A successful GitHub build proves that the Windows host compiles; it does not prove that Feature 18 initializes or meets real-time latency on the target GPU.'
+          )
+          $notes | Set-Content -LiteralPath alpha-notes.md -Encoding UTF8
+
+          gh release create alpha-latest Better-Xcloud-DLSS5-win64.zip Better-Xcloud-DLSS5-win64.sha256 --repo "$env:GITHUB_REPOSITORY" --target "$env:GITHUB_SHA" --title "Better Xcloud DLSS5 - rolling alpha" --notes-file alpha-notes.md --prerelease
