@@ -50,6 +50,7 @@ jobs:
           $files = @(
             'installer/Install.ps1',
             'installer/Uninstall.ps1',
+            'installer/Import-CompatibilityPack.ps1',
             'launcher/Start-XCloud-DLSS5.ps1'
           )
           foreach ($file in $files) {
@@ -63,6 +64,24 @@ jobs:
               throw "PowerShell syntax validation failed for $file"
             }
           }
+
+      - name: Test compatibility pack importer
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'compat-test'
+          $source = Join-Path $root 'source'
+          $dest = Join-Path $root 'dest'
+          $work = Join-Path $root 'work'
+          New-Item -ItemType Directory -Path $source,$dest,$work -Force | Out-Null
+          'fake ngx core' | Set-Content -LiteralPath (Join-Path $source '_nvngx.dll') -Encoding ascii
+          'fake neural runtime' | Set-Content -LiteralPath (Join-Path $source 'nvngx_dlssnr.dll') -Encoding ascii
+          $zip = Join-Path $root 'GTX1660-test.zip'
+          Compress-Archive -Path (Join-Path $source '*') -DestinationPath $zip -Force
+          $report = Join-Path $root 'report.txt'
+          & ./installer/Import-CompatibilityPack.ps1 -ZipPath $zip -InstalledNeural $dest -WorkRoot $work -ReportPath $report | Out-Host
+          if (-not (Test-Path (Join-Path $dest '_nvngx.dll'))) { throw 'Importer did not stage _nvngx.dll.' }
+          if (-not (Test-Path (Join-Path $dest 'nvngx_dlssnr.dll'))) { throw 'Importer did not stage nvngx_dlssnr.dll.' }
+          if (-not (Select-String -LiteralPath $report -SimpleMatch 'Local NGX core override present: True' -Quiet)) { throw 'Importer report did not record local core.' }
 
       - name: Configure
         shell: pwsh
@@ -80,7 +99,7 @@ jobs:
           New-Item -ItemType Directory -Path dist/installer,dist/launcher -Force | Out-Null
           Copy-Item build/Release/XCloudDLSS5Host.exe dist/
           Copy-Item Install.cmd,Uninstall.cmd,README.md,THIRD_PARTY_NOTICES.md dist/
-          Copy-Item installer/Install.ps1,installer/Uninstall.ps1 dist/installer/
+          Copy-Item installer/Install.ps1,installer/Uninstall.ps1,installer/Import-CompatibilityPack.ps1 dist/installer/
           Copy-Item launcher/Start-XCloud-DLSS5.ps1 dist/launcher/
           Copy-Item docs -Destination dist/docs -Recurse
 
