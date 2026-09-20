@@ -21,7 +21,7 @@ function Find-Browser {
     if ($edgeCommand) { $candidates += $edgeCommand.Source }
 
     $candidates += @(
-        "$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe",
+        "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
         "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
     )
 
