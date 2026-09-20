@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'BetterXcloudDLSS5')
+    [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'BetterXcloudDLSS5'),
+    [switch]$NonInteractive
 )
 
 $ErrorActionPreference = 'Stop'
@@ -134,18 +135,20 @@ Host source: https://github.com/diegocesaretti/Better-Xcloud-Dlss5
     Write-Host ''
     Write-Host 'Better xCloud is recommended and should be installed from its official project.'
 
-    $answer = Read-Host 'Open the official Better xCloud installation page now? [Y/n]'
-    if ([string]::IsNullOrWhiteSpace($answer) -or $answer -match '^[YySs]') {
-        Start-Process 'https://better-xcloud.github.io/'
-    }
+    if (-not $NonInteractive) {
+        $answer = Read-Host 'Open the official Better xCloud installation page now? [Y/n]'
+        if ([string]::IsNullOrWhiteSpace($answer) -or $answer -match '^[YySs]') {
+            Start-Process 'https://better-xcloud.github.io/'
+        }
 
-    $launch = Read-Host 'Launch Xbox Cloud Gaming with DLSS5 now? [Y/n]'
-    if ([string]::IsNullOrWhiteSpace($launch) -or $launch -match '^[YySs]') {
-        Start-Process powershell.exe -ArgumentList @(
-            '-NoProfile',
-            '-ExecutionPolicy', 'Bypass',
-            '-File', "`"$launcherInstalled`""
-        )
+        $launch = Read-Host 'Launch Xbox Cloud Gaming with DLSS5 now? [Y/n]'
+        if ([string]::IsNullOrWhiteSpace($launch) -or $launch -match '^[YySs]') {
+            Start-Process powershell.exe -ArgumentList @(
+                '-NoProfile',
+                '-ExecutionPolicy', 'Bypass',
+                '-File', "`"$launcherInstalled`""
+            )
+        }
     }
 }
 finally {
