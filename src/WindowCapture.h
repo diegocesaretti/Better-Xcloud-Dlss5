@@ -4,6 +4,7 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <vector>
@@ -31,6 +32,8 @@ public:
     WindowCapture& operator=(const WindowCapture&) = delete;
 
     bool Start(HWND hwnd);
+    bool StartMonitorCrop(HWND hwnd);
+    bool UpdateMonitorCrop(HWND hwnd);
     void Stop();
 
     // Drains every currently queued WGC frame and returns only the newest one.
@@ -38,11 +41,21 @@ public:
     bool TryGetLatest(CapturedFrame& out);
 
     const std::wstring& LastError() const noexcept { return lastError_; }
+    std::uint64_t FrameArrivals() const noexcept {
+        return frameArrivals_.load(std::memory_order_relaxed);
+    }
+    bool UsingMonitorCrop() const noexcept { return monitorCrop_; }
 
 private:
     bool CreateDevices();
     bool CreateCaptureItem(HWND hwnd);
-    bool EnsureStaging(ID3D11Texture2D* source);
+    bool CreateMonitorCaptureItem(HMONITOR monitor);
+    bool ConfigureMonitorCrop(HWND hwnd);
+    bool StartInternal();
+    bool EnsureStaging(
+        ID3D11Texture2D* source,
+        std::uint32_t width,
+        std::uint32_t height);
     bool CopyToCpu(ID3D11Texture2D* source, CapturedFrame& out);
     void SetError(const wchar_t* text, HRESULT hr = S_OK);
 
@@ -56,6 +69,13 @@ private:
     winrt::Windows::Graphics::Capture::GraphicsCaptureSession session_{nullptr};
 
     D3D11_TEXTURE2D_DESC stagingDesc_{};
+    D3D11_BOX cropBox_{};
+    RECT monitorBounds_{};
+    HMONITOR monitor_{};
+    bool monitorCrop_{false};
     std::uint64_t sequence_{};
+    std::atomic<std::uint64_t> frameArrivals_{0};
+    winrt::event_token frameArrivedToken_{};
+    bool frameArrivedSubscribed_{false};
     std::wstring lastError_;
 };
