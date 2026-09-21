@@ -7,6 +7,7 @@
 
 #include <windows.h>
 #include <winver.h>
+#include <Xinput.h>
 #include <dwmapi.h>
 
 #include <algorithm>
@@ -107,45 +108,95 @@ void SetOverlayInteractive(HWND overlay, bool interactive)
             SWP_FRAMECHANGED | (interactive ? 0 : SWP_NOACTIVATE));
 }
 
+bool ForegroundMatches(HWND hwnd)
+{
+    if (!hwnd || !IsWindow(hwnd)) return false;
+    HWND foreground = GetForegroundWindow();
+    if (!foreground) return false;
+    return foreground == hwnd ||
+           GetAncestor(foreground, GA_ROOT) == GetAncestor(hwnd, GA_ROOT);
+}
+
 bool ActivateWindow(HWND hwnd)
 {
     if (!hwnd || !IsWindow(hwnd)) return false;
+
+    hwnd = GetAncestor(hwnd, GA_ROOT);
+    if (!hwnd) return false;
+
+    if (ForegroundMatches(hwnd)) return true;
+
+    ShowWindowAsync(hwnd, IsIconic(hwnd) ? SW_RESTORE : SW_SHOW);
 
     const DWORD currentThread = GetCurrentThreadId();
     DWORD targetProcess = 0;
     const DWORD targetThread = GetWindowThreadProcessId(hwnd, &targetProcess);
 
-    HWND foreground = GetForegroundWindow();
-    DWORD foregroundProcess = 0;
-    const DWORD foregroundThread =
-        foreground ? GetWindowThreadProcessId(foreground, &foregroundProcess) : 0;
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        HWND foreground = GetForegroundWindow();
+        DWORD foregroundProcess = 0;
+        const DWORD foregroundThread =
+            foreground ? GetWindowThreadProcessId(foreground, &foregroundProcess) : 0;
 
-    bool attachedTarget = false;
-    bool attachedForeground = false;
+        bool attachedTarget = false;
+        bool attachedForeground = false;
 
-    if (targetThread && targetThread != currentThread) {
-        attachedTarget = AttachThreadInput(currentThread, targetThread, TRUE) != FALSE;
+        if (targetThread && targetThread != currentThread) {
+            attachedTarget =
+                AttachThreadInput(currentThread, targetThread, TRUE) != FALSE;
+        }
+        if (foregroundThread && foregroundThread != currentThread &&
+            foregroundThread != targetThread) {
+            attachedForeground =
+                AttachThreadInput(currentThread, foregroundThread, TRUE) != FALSE;
+        }
+
+        BringWindowToTop(hwnd);
+        SetWindowPos(
+            hwnd, HWND_TOP, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER);
+        SetForegroundWindow(hwnd);
+        SetActiveWindow(hwnd);
+        SetFocus(hwnd);
+
+        if (attachedForeground) {
+            AttachThreadInput(currentThread, foregroundThread, FALSE);
+        }
+        if (attachedTarget) {
+            AttachThreadInput(currentThread, targetThread, FALSE);
+        }
+
+        if (ForegroundMatches(hwnd)) return true;
+        Sleep(35);
     }
-    if (foregroundThread && foregroundThread != currentThread &&
-        foregroundThread != targetThread) {
-        attachedForeground =
-            AttachThreadInput(currentThread, foregroundThread, TRUE) != FALSE;
+
+    // Windows' foreground lock can still reject SetForegroundWindow even with
+    // attached input queues. SwitchToThisWindow is kept as a last-resort local
+    // fallback so controller focus returns to xCloud after the setup overlay.
+    using SwitchToThisWindowFn = void (WINAPI*)(HWND, BOOL);
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32) {
+        auto switchWindow = reinterpret_cast<SwitchToThisWindowFn>(
+            GetProcAddress(user32, "SwitchToThisWindow"));
+        if (switchWindow) {
+            switchWindow(hwnd, TRUE);
+            Sleep(50);
+        }
     }
 
-    ShowWindow(hwnd, SW_SHOW);
-    BringWindowToTop(hwnd);
-    const bool foregroundOk = SetForegroundWindow(hwnd) != FALSE;
-    SetFocus(hwnd);
+    return ForegroundMatches(hwnd);
+}
 
-    if (attachedForeground) {
-        AttachThreadInput(currentThread, foregroundThread, FALSE);
+int ConnectedXInputControllers()
+{
+    int count = 0;
+    for (DWORD index = 0; index < XUSER_MAX_COUNT; ++index) {
+        XINPUT_STATE state{};
+        if (XInputGetState(index, &state) == ERROR_SUCCESS) {
+            ++count;
+        }
     }
-    if (attachedTarget) {
-        AttachThreadInput(currentThread, targetThread, FALSE);
-    }
-
-    return foregroundOk || GetForegroundWindow() == hwnd ||
-           GetAncestor(GetForegroundWindow(), GA_ROOT) == hwnd;
+    return count;
 }
 
 bool TargetHasFocus(HWND target)
@@ -405,8 +456,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     // The compatibility host can become foreground while its proxy/overlay
     // initializes. xCloud's Gamepad API expects the browser to be the active
     // application, so explicitly hand focus back before normal play starts.
+    const int xinputControllers = ConnectedXInputControllers();
+    liveLog << "xinputControllersVisibleToHost=" << xinputControllers << "\n";
+
     const bool initialBrowserFocus = ActivateWindow(browser.hwnd);
-    liveLog << "browserFocusAfterInit=" << (initialBrowserFocus ? 1 : 0) << "\n";
+    liveLog << "browserFocusAfterInit=" << (initialBrowserFocus ? 1 : 0)
+            << " foregroundHwnd=0x" << std::hex
+            << reinterpret_cast<std::uintptr_t>(GetForegroundWindow())
+            << std::dec << "\n";
     liveLog.flush();
 
     TemporalGuideGenerator guides;
