@@ -1,11 +1,13 @@
 #include "WindowCapture.h"
 #include "WindowFinder.h"
+#include "ControlPanel.h"
 
 #include "D3D12Renderer.h"
 #include "DLSSBackend.h"
 #include "TemporalGuides.h"
 
 #include <windows.h>
+#include <shellapi.h>
 #include <winver.h>
 #include <Xinput.h>
 #include <dwmapi.h>
@@ -17,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -25,9 +28,6 @@
 namespace {
 
 constexpr wchar_t kOverlayClass[] = L"BetterXcloudDLSS5Overlay";
-constexpr int kHotkeyToggle = 1;
-constexpr int kHotkeyExit = 2;
-
 LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     switch (message) {
@@ -168,23 +168,66 @@ std::wstring RuntimeLogHint()
     return L"\n\nLog: " + (ModuleDirectory() / L"DLSSVideoPlayer.log").wstring();
 }
 
-BrowserWindowInfo WaitForBrowserWindow()
+void PumpMessages()
 {
-    using namespace std::chrono_literals;
-    const auto deadline = std::chrono::steady_clock::now() + 120s;
-
-    while (std::chrono::steady_clock::now() < deadline) {
-        BrowserWindowInfo info = FindBestXCloudWindow();
-        if (info.hwnd) return info;
-
-        MSG msg{};
-        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-        std::this_thread::sleep_for(250ms);
+    MSG msg{};
+    while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
     }
-    return {};
+}
+
+void OpenPath(const std::filesystem::path& path)
+{
+    ShellExecuteW(
+        nullptr,
+        L"open",
+        path.c_str(),
+        nullptr,
+        path.has_extension() ? path.parent_path().c_str() : nullptr,
+        SW_SHOWNORMAL);
+}
+
+bool CopyTextToClipboard(HWND owner, const std::wstring& text)
+{
+    if (!OpenClipboard(owner)) return false;
+    EmptyClipboard();
+
+    const SIZE_T bytes = (text.size() + 1) * sizeof(wchar_t);
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (!memory) {
+        CloseClipboard();
+        return false;
+    }
+
+    void* destination = GlobalLock(memory);
+    if (!destination) {
+        GlobalFree(memory);
+        CloseClipboard();
+        return false;
+    }
+
+    memcpy(destination, text.c_str(), bytes);
+    GlobalUnlock(memory);
+
+    if (!SetClipboardData(CF_UNICODETEXT, memory)) {
+        GlobalFree(memory);
+        CloseClipboard();
+        return false;
+    }
+
+    CloseClipboard();
+    return true;
+}
+
+std::wstring TargetKindName(CaptureTargetPreference kind)
+{
+    switch (kind) {
+        case CaptureTargetPreference::XboxApp: return L"Xbox App";
+        case CaptureTargetPreference::Browser: return L"Browser";
+        case CaptureTargetPreference::Auto: return L"Auto";
+    }
+    return L"Unknown";
 }
 
 bool WaitForFirstFrame(WindowCapture& capture, CapturedFrame& frame)
@@ -195,11 +238,7 @@ bool WaitForFirstFrame(WindowCapture& capture, CapturedFrame& frame)
     while (std::chrono::steady_clock::now() < deadline) {
         if (capture.TryGetLatest(frame)) return true;
 
-        MSG msg{};
-        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
+        PumpMessages();
         std::this_thread::sleep_for(2ms);
     }
     return false;
@@ -242,26 +281,74 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return 10;
     }
 
-    const bool hotkeyToggleRegistered =
-        RegisterHotKey(nullptr, kHotkeyToggle, MOD_NOREPEAT, VK_F7) != FALSE;
-    const bool hotkeyExitRegistered =
-        RegisterHotKey(nullptr, kHotkeyExit, MOD_NOREPEAT, VK_F9) != FALSE;
-
-
-    BrowserWindowInfo browser = WaitForBrowserWindow();
-    if (!browser.hwnd) {
-        ErrorBox(
-            L"No Edge/Chrome/Brave xCloud window was found within 2 minutes.\n\n"
-            L"Start Xbox Cloud Gaming, then launch Better Xcloud DLSS5 again.");
+    auto panel = ControlPanel::Create(GetModuleHandleW(nullptr));
+    if (!panel) {
+        ErrorBox(L"Unable to create the Better Xcloud DLSS5 control panel.");
         return 11;
     }
+
+    BrowserWindowInfo browser;
+    std::wstring diagnosticsText =
+        L"Better Xcloud DLSS5\r\n"
+        L"Status: waiting for target selection.\r\n";
+
+    const auto moduleDirForUi = ModuleDirectory();
+    const auto reshadeIniPath = moduleDirForUi / L"ReShade.ini";
+    const auto optiIniPath = moduleDirForUi / L"OptiScaler.ini";
+
+    while (panel->Alive() && !browser.hwnd) {
+        PumpMessages();
+
+        switch (panel->TakeCommand()) {
+            case ControlPanelCommand::Start: {
+                const auto preference = panel->SelectedTarget();
+                browser = FindBestTargetWindow(preference);
+                if (!browser.hwnd) {
+                    panel->SetStatus(
+                        preference == CaptureTargetPreference::XboxApp
+                            ? L"Xbox App window not found. Open the Xbox App and Cloud Gaming, then click Start mirror again."
+                            : preference == CaptureTargetPreference::Browser
+                                ? L"Supported xCloud browser window not found. Open Xbox Cloud Gaming in Chrome/Edge/Brave, then retry."
+                                : L"No Xbox App or supported xCloud browser window was found. Open one and retry.");
+                } else {
+                    std::wstring status = L"Target found: " + browser.processName;
+                    if (!browser.title.empty()) status += L" — " + browser.title;
+                    panel->SetStatus(status + L"\r\nInitializing capture and DLSS carrier...");
+                    panel->SetRunning(true);
+                }
+                break;
+            }
+            case ControlPanelCommand::OpenLogs:
+                OpenPath(moduleDirForUi);
+                break;
+            case ControlPanelCommand::OpenReShadeConfig:
+                OpenPath(reshadeIniPath);
+                break;
+            case ControlPanelCommand::OpenOptiScalerConfig:
+                OpenPath(optiIniPath);
+                break;
+            case ControlPanelCommand::CopyDiagnostics:
+                CopyTextToClipboard(panel->Hwnd(), diagnosticsText);
+                panel->SetStatus(L"Diagnostics copied to clipboard.");
+                break;
+            case ControlPanelCommand::Close:
+            case ControlPanelCommand::Stop:
+                return 0;
+            default:
+                break;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+
+    if (!panel->Alive() || !browser.hwnd) return 0;
 
     std::ofstream liveLog(
         ModuleDirectory() / L"XCloudDLSS5-live.log",
         std::ios::out | std::ios::trunc);
     liveLog << "Better Xcloud DLSS5 live session\n";
-    liveLog << "mode=attach-only-full-window-mirror inputPolicy=browser-owned\n";
-    liveLog << "browserProcess=";
+    liveLog << "mode=full-window-mirror inputPolicy=target-owned controlPanel=separate\n";
+    liveLog << "targetProcess=";
     for (wchar_t ch : browser.processName) liveLog << (ch <= 0x7f ? char(ch) : '?');
     liveLog << " title=";
     for (wchar_t ch : browser.title) liveLog << (ch <= 0x7f ? char(ch) : '?');
@@ -275,10 +362,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     liveLog << "versionModule=";
     for (wchar_t ch : loadedVersionPath) liveLog << (ch <= 0x7f ? char(ch) : '?');
     liveLog << "\n";
-    liveLog << "hotkeys F7=" << (hotkeyToggleRegistered ? 1 : 0)
-            << " F9=" << (hotkeyExitRegistered ? 1 : 0)
-            << " Insert=unregistered F8=unregistered"
-            << "\n";
+    liveLog << "targetKind=";
+    {
+        const std::wstring kind = TargetKindName(browser.kind);
+        for (wchar_t ch : kind) liveLog << (ch <= 0x7f ? char(ch) : '?');
+    }
+    liveLog << "\n";
     liveLog.flush();
 
     WindowCapture capture;
@@ -291,7 +380,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     if (!WaitForFirstFrame(capture, frame)) {
         std::wstring reason = capture.LastError();
         if (reason.empty()) {
-            reason = L"No frame arrived from the browser. Make sure the xCloud window is visible.";
+            reason = L"No frame arrived from the target window. Make sure Xbox Cloud Gaming is visible.";
         }
         ErrorBox(reason);
         return 13;
@@ -360,11 +449,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     liveLog << "renderer=initialized dlssAvailable=1\n";
 
+    panel->SetStatus(
+        L"Mirror running on " + TargetKindName(browser.kind) +
+        L". Minimize this panel while playing. The target application keeps all input.");
+    panel->SetMirrorVisible(true);
+
+
     // Mirror mode is strictly observational: never activate, focus, subclass or
-    // synthesize input into the browser. xCloud owns keyboard/mouse/gamepad.
+    // synthesize input into the target. Xbox App/Chrome owns keyboard/mouse/gamepad.
     const int xinputControllers = ConnectedXInputControllers();
     liveLog << "xinputControllersVisibleToHost=" << xinputControllers << "\n";
-    liveLog << "browserForegroundAfterInit="
+    liveLog << "targetForegroundAfterInit="
             << (TargetHasFocus(browser.hwnd) ? 1 : 0)
             << " foregroundHwnd=0x" << std::hex
             << reinterpret_cast<std::uintptr_t>(GetForegroundWindow())
@@ -387,21 +482,38 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     double statsProcessingMs = 0.0;
 
     while (running && IsWindow(browser.hwnd)) {
-        MSG msg{};
-        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_HOTKEY) {
-                if (msg.wParam == kHotkeyToggle) {
-                    overlayEnabled = !overlayEnabled;
-                    if (!overlayEnabled) ShowWindow(overlay, SW_HIDE);
-                } else if (msg.wParam == kHotkeyExit) {
-                    liveLog << "exitReason=hotkey-F9\n";
-                    liveLog.flush();
-                    running = false;
+        PumpMessages();
+
+        switch (panel->TakeCommand()) {
+            case ControlPanelCommand::Stop:
+            case ControlPanelCommand::Close:
+                liveLog << "exitReason=control-panel-stop\n";
+                liveLog.flush();
+                running = false;
+                break;
+            case ControlPanelCommand::ToggleMirror:
+                overlayEnabled = !overlayEnabled;
+                panel->SetMirrorVisible(overlayEnabled);
+                if (!overlayEnabled) ShowWindow(overlay, SW_HIDE);
+                break;
+            case ControlPanelCommand::OpenLogs:
+                OpenPath(ModuleDirectory());
+                break;
+            case ControlPanelCommand::OpenReShadeConfig:
+                OpenPath(ModuleDirectory() / L"ReShade.ini");
+                break;
+            case ControlPanelCommand::OpenOptiScalerConfig:
+                OpenPath(ModuleDirectory() / L"OptiScaler.ini");
+                break;
+            case ControlPanelCommand::CopyDiagnostics:
+                if (CopyTextToClipboard(panel->Hwnd(), diagnosticsText)) {
+                    panel->SetStatus(L"Diagnostics copied to clipboard. Mirror is still running.");
                 }
-            }
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+                break;
+            default:
+                break;
         }
+        if (!panel->Alive()) running = false;
         if (!running) break;
 
         const auto now = std::chrono::steady_clock::now();
@@ -578,6 +690,31 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                     << "\n";
             liveLog.flush();
 
+            std::wostringstream stats;
+            stats << std::fixed << std::setprecision(2)
+                  << L"Target: " << TargetKindName(browser.kind)
+                  << L"  [" << browser.processName << L"]\r\n"
+                  << L"Capture: " << frame.width << L"x" << frame.height << L"\r\n"
+                  << L"DLSS carrier: active\r\n"
+                  << L"FPS: " << fps << L"\r\n"
+                  << L"Average processing: " << avgMs << L" ms\r\n"
+                  << L"Neural GPU: " << renderer->LastNeuralGpuMs() << L" ms\r\n"
+                  << L"Dropped capture frames: " << statsDroppedFrames << L"\r\n"
+                  << L"Peak VRAM: " << renderer->PeakLocalVideoMemoryMiB() << L" MiB\r\n"
+                  << L"DLSS evaluations: " << renderer->DLSSEvaluations() << L"\r\n"
+                  << L"XInput controllers visible to host: " << xinputControllers << L"\r\n"
+                  << L"Target foreground: " << (TargetHasFocus(browser.hwnd) ? L"yes" : L"no");
+            panel->SetStats(stats.str());
+
+            diagnosticsText =
+                L"Better Xcloud DLSS5 diagnostics\r\n"
+                L"Mode: full-window mirror / target-owned input\r\n" +
+                stats.str() +
+                L"\r\nRuntime: " + ModuleDirectory().wstring() +
+                L"\r\nLive log: " + (ModuleDirectory() / L"XCloudDLSS5-live.log").wstring() +
+                L"\r\nReShade log: " + (ModuleDirectory() / L"ReShade.log").wstring() +
+                L"\r\nDLSS log: " + (ModuleDirectory() / L"DLSSVideoPlayer.log").wstring();
+
             statsWindowStart = statsNow;
             statsInputFrames = 0;
             statsRenderedFrames = 0;
@@ -587,7 +724,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     }
 
     if (!IsWindow(browser.hwnd)) {
-        liveLog << "exitReason=browser-window-closed\n";
+        liveLog << "exitReason=target-window-closed\n";
     }
     liveLog << "session=ended\n";
     liveLog.flush();
@@ -596,8 +733,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     renderer.reset();
     capture.Stop();
     DestroyWindow(overlay);
+    panel->SetRunning(false);
+    panel->SetStatus(L"Mirror stopped.");
 
-    UnregisterHotKey(nullptr, kHotkeyToggle);
-    UnregisterHotKey(nullptr, kHotkeyExit);
     return 0;
 }
