@@ -213,6 +213,18 @@ DynamicMFG=false
 MFGHotkeys=false
 "@ | Set-Content -LiteralPath (Join-Path $installedNeural 'dlss-enabler.ini') -Encoding ASCII
         Write-Host 'DLSS Enabler UI disabled; compatibility shim will run headless.' -ForegroundColor Green
+
+        # OptiScaler defaults to Insert, but write it explicitly so every clean
+        # install has a predictable setup key. The host temporarily focuses the
+        # render overlay on the first Insert so OptiScaler can receive mouse and
+        # keyboard, then returns focus to xCloud after the menu closes.
+        $optiIni = Join-Path $installedNeural 'OptiScaler.ini'
+        if (-not (Test-Path -LiteralPath $optiIni)) {
+            New-Item -ItemType File -Path $optiIni -Force | Out-Null
+        }
+        [void][BetterXcloudIni]::WritePrivateProfileString('Menu', 'OverlayMenu', 'true', $optiIni)
+        [void][BetterXcloudIni]::WritePrivateProfileString('Menu', 'ShortcutKey', '0x2D', $optiIni)
+        Write-Host 'OptiScaler menu configured on Insert.' -ForegroundColor Green
     }
 
     New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
@@ -246,7 +258,8 @@ Streamline/version.dll compatibility route: $streamlineCompat
     Write-Host "Installed to: $InstallRoot" -ForegroundColor Green
     Write-Host ''
     Write-Host 'Use Start > Better Xcloud DLSS5.'
-    Write-Host 'F8 = show/hide DLSS overlay'
+    Write-Host 'Insert = open/close OptiScaler setup (mouse enabled while open)'
+    Write-Host 'F7 = show/hide processed overlay'
     Write-Host 'F9 = stop the DLSS host'
     Write-Host ''
     Write-Host 'Better xCloud is recommended and should be installed from its official project.'
