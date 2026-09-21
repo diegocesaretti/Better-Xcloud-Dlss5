@@ -28,6 +28,8 @@ namespace {
 constexpr wchar_t kOverlayClass[] = L"BetterXcloudDLSS5Overlay";
 constexpr int kHotkeyToggle = 1;
 constexpr int kHotkeyExit = 2;
+constexpr int kHotkeySetupInsert = 3;
+constexpr int kHotkeySetupF8 = 4;
 bool g_overlayInteractive = false;
 
 LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
@@ -36,7 +38,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
         case WM_NCHITTEST:
             return g_overlayInteractive ? HTCLIENT : HTTRANSPARENT;
         case WM_MOUSEACTIVATE:
-            return MA_NOACTIVATE;
+            return g_overlayInteractive ? MA_ACTIVATE : MA_NOACTIVATE;
         case WM_ERASEBKGND:
             return 1;
         case WM_CLOSE:
@@ -94,12 +96,9 @@ void SetOverlayInteractive(HWND overlay, bool interactive)
 {
     if (!overlay) return;
 
-    // Never remove WS_EX_NOACTIVATE. Setup mode should intercept mouse clicks
-    // without taking system focus away from Chrome/xCloud (and its Gamepad API).
     LONG_PTR exStyle = GetWindowLongPtrW(overlay, GWL_EXSTYLE);
     if (interactive) {
-        exStyle &= ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT);
-        exStyle |= static_cast<LONG_PTR>(WS_EX_NOACTIVATE);
+        exStyle &= ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
     } else {
         exStyle |= static_cast<LONG_PTR>(WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
     }
@@ -111,14 +110,18 @@ void SetOverlayInteractive(HWND overlay, bool interactive)
         HWND_TOP,
         0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER |
-            SWP_FRAMECHANGED | SWP_NOACTIVATE);
+            SWP_FRAMECHANGED | (interactive ? 0 : SWP_NOACTIVATE));
 }
 
-void PulseOverlayKey(HWND overlay, UINT vk)
+void SendVirtualKey(UINT vk)
 {
-    if (!overlay) return;
-    PostMessageW(overlay, WM_KEYDOWN, vk, 1);
-    PostMessageW(overlay, WM_KEYUP, vk, 1 | (1u << 30) | (1u << 31));
+    INPUT inputs[2]{};
+    inputs[0].type = INPUT_KEYBOARD;
+    inputs[0].ki.wVk = static_cast<WORD>(vk);
+    inputs[1].type = INPUT_KEYBOARD;
+    inputs[1].ki.wVk = static_cast<WORD>(vk);
+    inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(2, inputs, sizeof(INPUT));
 }
 
 bool ForegroundMatches(HWND hwnd)
@@ -439,10 +442,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return 10;
     }
 
-    // F8 is deliberately left free for compatibility tools / user bindings.
-    // F7 only hides the processed overlay; Insert enters OptiScaler setup mode.
-    RegisterHotKey(nullptr, kHotkeyToggle, 0, VK_F7);
-    RegisterHotKey(nullptr, kHotkeyExit, 0, VK_F9);
+    RegisterHotKey(nullptr, kHotkeyToggle, MOD_NOREPEAT, VK_F7);
+    RegisterHotKey(nullptr, kHotkeyExit, MOD_NOREPEAT, VK_F9);
+    // Use real system hotkeys instead of polling GetAsyncKeyState. This keeps
+    // setup reliable even while ReShade/OptiScaler owns the foreground window.
+    RegisterHotKey(nullptr, kHotkeySetupInsert, MOD_NOREPEAT, VK_INSERT);
+    RegisterHotKey(nullptr, kHotkeySetupF8, MOD_NOREPEAT, VK_F8);
 
     BrowserWindowInfo browser = WaitForBrowserWindow();
     if (!browser.hwnd) {
@@ -551,14 +556,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     liveLog << "renderer=initialized dlssAvailable=1\n";
 
-    // The compatibility host can become foreground while its proxy/overlay
-    // initializes. xCloud's Gamepad API expects the browser to be the active
-    // application, so explicitly hand focus back before normal play starts.
+    // Do not touch browser focus during normal startup. The overlay is created
+    // non-activating, so the browser keeps the exact focus/visibility state it
+    // had before the native renderer started.
     const int xinputControllers = ConnectedXInputControllers();
     liveLog << "xinputControllersVisibleToHost=" << xinputControllers << "\n";
-
-    const bool initialBrowserFocus = FocusBrowserContent(browser.hwnd);
-    liveLog << "browserFocusAfterInit=" << (initialBrowserFocus ? 1 : 0)
+    liveLog << "browserForegroundAfterInit="
+            << (ForegroundMatches(browser.hwnd) ? 1 : 0)
             << " foregroundHwnd=0x" << std::hex
             << reinterpret_cast<std::uintptr_t>(GetForegroundWindow())
             << std::dec
@@ -574,8 +578,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool running = true;
     bool forceReset = true;
     bool setupMode = false;
-    bool insertWasDown = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
-    bool escapeWasDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
     std::uint64_t lastSequence = 0;
 
     const auto ptsOrigin = std::chrono::steady_clock::now();
@@ -598,6 +600,36 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                     liveLog << "exitReason=hotkey-F9\n";
                     liveLog.flush();
                     running = false;
+                } else if (msg.wParam == kHotkeySetupInsert ||
+                           msg.wParam == kHotkeySetupF8) {
+                    const wchar_t* trigger =
+                        msg.wParam == kHotkeySetupInsert ? L"Insert" : L"F8";
+
+                    if (!setupMode) {
+                        setupMode = true;
+                        SetOverlayInteractive(overlay, true);
+                        PlaceOverlay(overlay, browser.hwnd);
+                        ShowWindow(overlay, SW_SHOW);
+                        const bool focused = ActivateWindow(overlay);
+                        // ReShade's private overlay key is Home. Send a real
+                        // keyboard event while the render window owns focus so
+                        // ReShade's normal input capture path receives it.
+                        SendVirtualKey(VK_HOME);
+                        liveLog << "setupMode=entered trigger="
+                                << (msg.wParam == kHotkeySetupInsert ? "Insert" : "F8")
+                                << " overlayFocus=" << (focused ? 1 : 0) << "\n";
+                    } else {
+                        // Close ReShade before releasing mouse capture.
+                        SendVirtualKey(VK_HOME);
+                        Sleep(80);
+                        setupMode = false;
+                        SetOverlayInteractive(overlay, false);
+                        const bool focused = FocusBrowserContent(browser.hwnd);
+                        liveLog << "setupMode=exited trigger="
+                                << (msg.wParam == kHotkeySetupInsert ? "Insert" : "F8")
+                                << " browserFocus=" << (focused ? 1 : 0) << "\n";
+                    }
+                    liveLog.flush();
                 }
             }
             TranslateMessage(&msg);
@@ -606,43 +638,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         if (!running) break;
 
         const auto now = std::chrono::steady_clock::now();
-
-        // Setup mode never steals foreground from Chrome. It only removes
-        // WS_EX_TRANSPARENT, so mouse clicks go to the ReShade/OptiScaler UI
-        // while WS_EX_NOACTIVATE keeps the xCloud document foreground.
-        const bool insertDown = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
-        const bool escapeDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
-
-        if (insertDown && !insertWasDown) {
-            setupMode = !setupMode;
-            SetOverlayInteractive(overlay, setupMode);
-            PlaceOverlay(overlay, browser.hwnd);
-            ShowWindow(overlay, SW_SHOWNOACTIVATE);
-
-            // Keep the user's physical Insert entirely in the browser path.
-            // Toggle ReShade with a synthetic Home event directed only at the
-            // host HWND, avoiding double-toggles from global key polling.
-            PulseOverlayKey(overlay, VK_HOME);
-
-            const bool browserFocused = FocusBrowserContent(browser.hwnd);
-            liveLog << "setupMode=" << (setupMode ? "entered" : "exited")
-                    << " trigger=Insert browserFocus="
-                    << (browserFocused ? 1 : 0) << "\n";
-            liveLog.flush();
-        }
-
-        // Escape is an unconditional recovery path if an overlay/add-on menu
-        // gets into a bad state: restore click-through immediately.
-        if (setupMode && escapeDown && !escapeWasDown) {
-            setupMode = false;
-            SetOverlayInteractive(overlay, false);
-            FocusBrowserContent(browser.hwnd);
-            liveLog << "setupMode=exited trigger=Escape browserFocus=1\n";
-            liveLog.flush();
-        }
-
-        insertWasDown = insertDown;
-        escapeWasDown = escapeDown;
 
         if (now >= nextPositionSync) {
             PlaceOverlay(overlay, browser.hwnd);
@@ -702,7 +697,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
             PlaceOverlay(overlay, browser.hwnd);
             SetOverlayInteractive(overlay, setupMode);
-            FocusBrowserContent(browser.hwnd);
+            if (setupMode) {
+                ActivateWindow(overlay);
+            } else {
+                FocusBrowserContent(browser.hwnd);
+            }
             frame = std::move(latest);
             previousFrameTime = std::chrono::steady_clock::now();
             forceReset = true;
@@ -839,5 +838,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     UnregisterHotKey(nullptr, kHotkeyToggle);
     UnregisterHotKey(nullptr, kHotkeyExit);
+    UnregisterHotKey(nullptr, kHotkeySetupInsert);
+    UnregisterHotKey(nullptr, kHotkeySetupF8);
     return 0;
 }
