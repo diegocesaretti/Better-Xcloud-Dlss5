@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$ZipPath,
+    [Parameter(Mandatory = $true)][string]$PackPath,
     [Parameter(Mandatory = $true)][string]$InstalledNeural,
     [Parameter(Mandatory = $true)][string]$WorkRoot,
     [Parameter(Mandatory = $true)][string]$ReportPath
@@ -9,34 +9,83 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-if (-not (Test-Path -LiteralPath $ZipPath)) {
-    throw "Compatibility pack not found: $ZipPath"
+if (-not (Test-Path -LiteralPath $PackPath)) {
+    throw "Compatibility pack not found: $PackPath"
 }
 if (-not (Test-Path -LiteralPath $InstalledNeural)) {
     throw "Neural runtime directory not found: $InstalledNeural"
 }
 
-$compatExtract = Join-Path $WorkRoot 'compat-pack'
-if (Test-Path -LiteralPath $compatExtract) {
-    Remove-Item -LiteralPath $compatExtract -Recurse -Force
-}
-New-Item -ItemType Directory -Path $compatExtract -Force | Out-Null
-Expand-Archive -LiteralPath $ZipPath -DestinationPath $compatExtract -Force
+$resolvedPack = (Resolve-Path -LiteralPath $PackPath).Path
+$compatRoot = $resolvedPack
+$packHash = ''
 
-$inventoryPatterns = @('*nvngx*', '*renodx*', '*reshade*', 'sl.*', '*streamline*')
+if (Test-Path -LiteralPath $resolvedPack -PathType Leaf) {
+    if ([IO.Path]::GetExtension($resolvedPack) -ne '.zip') {
+        throw "Compatibility pack must be a ZIP file or a directory: $resolvedPack"
+    }
+    $compatExtract = Join-Path $WorkRoot 'compat-pack'
+    if (Test-Path -LiteralPath $compatExtract) {
+        Remove-Item -LiteralPath $compatExtract -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $compatExtract -Force | Out-Null
+    Expand-Archive -LiteralPath $resolvedPack -DestinationPath $compatExtract -Force
+    $compatRoot = $compatExtract
+    $packHash = (Get-FileHash -LiteralPath $resolvedPack -Algorithm SHA256).Hash.ToLowerInvariant()
+} else {
+    # A folder downloaded from Drive is accepted directly. Produce a stable
+    # digest over relevant files so the test machine can still report exactly
+    # which payload was used.
+    $hashRows = @()
+    Get-ChildItem -LiteralPath $compatRoot -Recurse -File | Sort-Object FullName | ForEach-Object {
+        $relative = $_.FullName.Substring($compatRoot.Length).TrimStart([char]92)
+        $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        $hashRows += "$relative|$($_.Length)|$hash"
+    }
+    $hashText = $hashRows -join [Environment]::NewLine
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($hashText)
+        $packHash = ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+$inventoryPatterns = @(
+    'version.dll',
+    '*nvngx*',
+    '*renodx*',
+    '*reshade*',
+    'sl.*',
+    '*streamline*'
+)
 $inventory = @()
 foreach ($pattern in $inventoryPatterns) {
-    $inventory += @(Get-ChildItem -LiteralPath $compatExtract -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue)
+    $inventory += @(Get-ChildItem -LiteralPath $compatRoot -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue)
 }
 $inventory = @($inventory | Sort-Object FullName -Unique)
 
-# These are the only files allowed to replace the pinned upstream runtime.
-# System/driver DLLs such as nvapi64.dll and nvofapi64.dll are deliberately excluded.
+# GTX/Turing packs seen in the wild use two different entry paths:
+#  1) a local NGX core override (_nvngx.dll / nvngx.dll), or
+#  2) a version.dll compatibility proxy plus the Streamline plugin set.
+# Stage both layouts when present. System/driver DLLs such as nvapi64.dll and
+# nvofapi64.dll remain deliberately excluded.
 $copyNames = @(
+    'version.dll',
     '_nvngx.dll',
     'nvngx.dll',
     'nvngx_dlss.dll',
+    'nvngx_dlssg.dll',
     'nvngx_dlssnr.dll',
+    'sl.common.dll',
+    'sl.dlss.dll',
+    'sl.dlss_g.dll',
+    'sl.dlss_nr.dll',
+    'sl.interposer.dll',
+    'sl.nis.dll',
+    'sl.pcl.dll',
+    'sl.reflex.dll',
     'renodx-dlss5.addon64',
     'dxgi.dll',
     'ReShade.ini'
@@ -44,7 +93,7 @@ $copyNames = @(
 
 $copied = @()
 foreach ($name in $copyNames) {
-    $matches = @(Get-ChildItem -LiteralPath $compatExtract -Recurse -File -Filter $name -ErrorAction SilentlyContinue)
+    $matches = @(Get-ChildItem -LiteralPath $compatRoot -Recurse -File -Filter $name -ErrorAction SilentlyContinue)
     if ($matches.Count -gt 1) {
         $paths = ($matches | ForEach-Object { $_.FullName }) -join [Environment]::NewLine
         throw "Compatibility pack contains more than one '$name'. Refusing to guess. Candidates:$([Environment]::NewLine)$paths"
@@ -56,7 +105,7 @@ foreach ($name in $copyNames) {
         $hash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
         $copied += [pscustomobject]@{
             Name = $name
-            Source = $source.Substring($compatExtract.Length).TrimStart([char]92)
+            Source = $source.Substring($compatRoot.Length).TrimStart([char]92)
             Size = (Get-Item -LiteralPath $destination).Length
             SHA256 = $hash
         }
@@ -65,14 +114,28 @@ foreach ($name in $copyNames) {
 }
 
 $hasLocalCore = @($copied | Where-Object { $_.Name -in @('_nvngx.dll', 'nvngx.dll') }).Count -gt 0
-$packHash = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$hasVersionProxy = Test-Path -LiteralPath (Join-Path $InstalledNeural 'version.dll')
+$hasStreamlineInterposer = Test-Path -LiteralPath (Join-Path $InstalledNeural 'sl.interposer.dll')
+$hasStreamlineNr = Test-Path -LiteralPath (Join-Path $InstalledNeural 'sl.dlss_nr.dll')
+$hasDlss = Test-Path -LiteralPath (Join-Path $InstalledNeural 'nvngx_dlss.dll')
+$hasDlssNr = Test-Path -LiteralPath (Join-Path $InstalledNeural 'nvngx_dlssnr.dll')
+$hasStreamlineProxy = $hasVersionProxy -and $hasStreamlineInterposer -and $hasStreamlineNr -and $hasDlss -and $hasDlssNr
+
+$mode =
+    if ($hasStreamlineProxy) { 'streamline-version-proxy' }
+    elseif ($hasLocalCore) { 'local-ngx-core' }
+    else { 'partial-or-unknown' }
 
 $report = New-Object Text.StringBuilder
 [void]$report.AppendLine('Better Xcloud DLSS5 compatibility-pack report')
 [void]$report.AppendLine("Imported: $(Get-Date -Format o)")
-[void]$report.AppendLine("Pack: $ZipPath")
-[void]$report.AppendLine("Pack SHA256: $packHash")
+[void]$report.AppendLine("Pack: $resolvedPack")
+[void]$report.AppendLine("Pack digest SHA256: $packHash")
+[void]$report.AppendLine("Compatibility mode: $mode")
 [void]$report.AppendLine("Local NGX core override present: $hasLocalCore")
+[void]$report.AppendLine("version.dll proxy present: $hasVersionProxy")
+[void]$report.AppendLine("Streamline interposer present: $hasStreamlineInterposer")
+[void]$report.AppendLine("Streamline NR plugin present: $hasStreamlineNr")
 [void]$report.AppendLine('')
 [void]$report.AppendLine('Copied overrides:')
 if ($copied.Count -eq 0) {
@@ -88,21 +151,25 @@ if ($inventory.Count -eq 0) {
     [void]$report.AppendLine('  (none)')
 } else {
     foreach ($item in $inventory) {
-        $relative = $item.FullName.Substring($compatExtract.Length).TrimStart([char]92)
+        $relative = $item.FullName.Substring($compatRoot.Length).TrimStart([char]92)
         $hash = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
         [void]$report.AppendLine("  $relative | $($item.Length) bytes | $hash")
     }
 }
 $report.ToString() | Set-Content -LiteralPath $ReportPath -Encoding UTF8
 
-if (-not $hasLocalCore) {
-    Write-Warning 'No _nvngx.dll or nvngx.dll was found in the compatibility pack. The driver NGX core may still reject GTX hardware before RenoDX can intercept.'
+if ($hasStreamlineProxy) {
+    Write-Host 'Streamline/version.dll compatibility route staged.' -ForegroundColor Green
+} elseif ($hasLocalCore) {
+    Write-Host 'Local NGX core override staged.' -ForegroundColor Green
 } else {
-    Write-Host 'Local NGX core override staged. NGX will probe it before DriverStore.' -ForegroundColor Green
+    Write-Warning 'The pack did not contain a complete local-NGX or Streamline/version.dll compatibility route.'
 }
 
 [pscustomobject]@{
     PackSHA256 = $packHash
+    Mode = $mode
     LocalCore = $hasLocalCore
+    StreamlineProxy = $hasStreamlineProxy
     CopiedCount = $copied.Count
 } | ConvertTo-Json -Compress
