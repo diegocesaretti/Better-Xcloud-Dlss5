@@ -11,7 +11,7 @@ Experimental Windows bridge that applies the **DLSS 5 neural-rendering pipeline 
 - Keep Better xCloud responsible for xCloud/WebRTC/input features.
 - Keep the DLSS5 runtime isolated from the browser.
 - Never queue old cloud frames: newest frame wins.
-- F8 toggles the processed overlay; F9 exits the host.
+- Insert enters/leaves OptiScaler setup mode; F7 toggles the processed overlay; F9 exits the host.
 - No redistribution of the experimental neural runtime from this repository.
 
 ## How it works
@@ -34,7 +34,7 @@ DLSS5 Video Player renderer / RenoDX Feature 18
 click-through overlay
 ```
 
-The browser remains focused, so controller, keyboard/mouse, audio, login and the xCloud session continue to work normally.
+The browser remains focused during normal play, so controller, keyboard/mouse, audio, login and the xCloud session continue to work normally. Pressing **Insert** temporarily makes the render overlay interactive and foreground so OptiScaler can receive its menu hotkey and mouse input; pressing Insert again closes setup and returns focus/input to xCloud.
 
 ## Installation target
 
@@ -57,7 +57,7 @@ Two beginner-friendly options are supported:
 1. Put a single ZIP named like `GTX1660*.zip`, `compat*.zip` or `drive-download*.zip` beside `Install.cmd`, then double-click `Install.cmd`.
 2. Drag the known-good compatibility ZIP onto `Install.cmd`.
 
-The importer only replaces an allowlist of local runtime files: `_nvngx.dll`, `nvngx.dll`, `nvngx_dlss.dll`, `nvngx_dlssnr.dll`, `renodx-dlss5.addon64`, `dxgi.dll`, and `ReShade.ini`. It never copies driver/system DLLs such as `nvapi64.dll` or `nvofapi64.dll`.
+The importer only stages an allowlist of local runtime files. It supports both a direct local NGX override and the known-good GTX/Turing **version.dll + Streamline** layout, including `version.dll`, `nvngx_dlss*.dll`, `sl.*.dll`, `renodx-dlss5.addon64`, `dxgi.dll`, and `ReShade.ini`. It never copies driver/system DLLs such as `nvapi64.dll` or `nvofapi64.dll`.
 
 A full inventory and SHA-256 report is written to:
 
@@ -65,7 +65,7 @@ A full inventory and SHA-256 report is written to:
 %LOCALAPPDATA%\BetterXcloudDLSS5\COMPATIBILITY_PACK_INFO.txt
 ```
 
-A local `_nvngx.dll` / `nvngx.dll` is important for the current GTX experiment because NVIDIA NGX probes beside the executable before falling back to DriverStore.
+For the currently validated GTX 1660 path, the compatibility shim is loaded locally as `version.dll` before the carrier initializes. The host itself still uses raw NGX; the Streamline files are compatibility-pack companions rather than the host's rendering API.
 
 ## Hardware
 
