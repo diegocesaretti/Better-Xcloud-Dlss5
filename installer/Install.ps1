@@ -34,10 +34,15 @@ function Resolve-CompatibilityPack([string]$ExplicitPath, [string]$PackageRoot) 
     foreach ($pattern in @('GTX1660*.zip', 'compat*.zip', 'drive-download*.zip')) {
         $candidates += @(Get-ChildItem -LiteralPath $PackageRoot -File -Filter $pattern -ErrorAction SilentlyContinue)
     }
+    $streamlineFolder = Join-Path $PackageRoot 'streamline'
+    if (Test-Path -LiteralPath $streamlineFolder -PathType Container) {
+        $candidates += @(Get-Item -LiteralPath $streamlineFolder)
+    }
+
     $candidates = @($candidates | Sort-Object FullName -Unique)
     if ($candidates.Count -eq 1) { return $candidates[0].FullName }
     if ($candidates.Count -gt 1) {
-        Write-Warning 'Multiple compatibility ZIPs were found beside Install.cmd; none was selected automatically.'
+        Write-Warning 'Multiple compatibility packs were found beside Install.cmd; none was selected automatically.'
     }
     return ''
 }
@@ -132,14 +137,23 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($resolvedCompatibilityPack)) {
         Write-Step 'Importing known-good GTX/Turing compatibility pack'
         $compatReport = Join-Path $InstallRoot 'COMPATIBILITY_PACK_INFO.txt'
-        & $compatImporter -ZipPath $resolvedCompatibilityPack -InstalledNeural $installedNeural -WorkRoot $tempRoot -ReportPath $compatReport | Out-Host
+        $compatJson = & $compatImporter -PackPath $resolvedCompatibilityPack -InstalledNeural $installedNeural -WorkRoot $tempRoot -ReportPath $compatReport
+        $compatJson | Out-Host
         $compatImported = $true
     } else {
         Write-Host ''
         Write-Host 'No external GTX compatibility pack selected; using the pinned upstream runtime.' -ForegroundColor Yellow
     }
 
-    Write-Step 'Configuring RenoDX raw-NGX neural hook'
+    $streamlineCompat =
+        (Test-Path -LiteralPath (Join-Path $installedNeural 'version.dll')) -and
+        (Test-Path -LiteralPath (Join-Path $installedNeural 'sl.interposer.dll')) -and
+        (Test-Path -LiteralPath (Join-Path $installedNeural 'sl.dlss_nr.dll')) -and
+        (Test-Path -LiteralPath (Join-Path $installedNeural 'nvngx_dlss.dll')) -and
+        (Test-Path -LiteralPath (Join-Path $installedNeural 'nvngx_dlssnr.dll'))
+    $renoHookMode = if ($streamlineCompat) { '1' } else { '2' }
+
+    Write-Step $(if ($streamlineCompat) { 'Configuring RenoDX Streamline neural hook' } else { 'Configuring RenoDX raw-NGX neural hook' })
     $reshadeIni = Join-Path $installedNeural 'ReShade.ini'
     Add-Type -TypeDefinition @'
 using System;
@@ -167,7 +181,7 @@ public static class BetterXcloudIni {
         Fail 'Could not enable the RenoDX neural add-on in ReShade.ini.' 23
     }
     foreach ($entry in @(
-        @('EnableHooks', '2'),
+        @('EnableHooks', $renoHookMode),
         @('NeuralUplift', '1'),
         @('NREnableUpscaling', '0')
     )) {
@@ -175,7 +189,7 @@ public static class BetterXcloudIni {
             Fail "Could not write RenoDX setting $($entry[0])." 24
         }
     }
-    Write-Host 'RenoDX neural hook enabled for the bridge.' -ForegroundColor Green
+    Write-Host "RenoDX neural hook enabled for the bridge (EnableHooks=$renoHookMode)." -ForegroundColor Green
 
     New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
     Copy-Item -LiteralPath $launcherSource -Destination (Join-Path $InstallRoot 'Start-XCloud-DLSS5.ps1') -Force
@@ -188,6 +202,8 @@ Upstream package SHA256: $UpstreamSha256
 Host source: https://github.com/diegocesaretti/Better-Xcloud-Dlss5
 Compatibility pack: $resolvedCompatibilityPack
 Compatibility pack imported: $compatImported
+RenoDX EnableHooks: $renoHookMode
+Streamline/version.dll compatibility route: $streamlineCompat
 "@ | Set-Content -LiteralPath (Join-Path $InstallRoot 'INSTALL_INFO.txt') -Encoding UTF8
 
     Write-Step 'Creating Start Menu shortcut'
