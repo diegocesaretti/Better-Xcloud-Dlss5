@@ -71,13 +71,22 @@ $inventory = @($inventory | Sort-Object FullName -Unique)
 #  2) a version.dll compatibility proxy plus the Streamline plugin set.
 # Stage both layouts when present. System/driver DLLs such as nvapi64.dll and
 # nvofapi64.dll remain deliberately excluded.
+#
+# IMPORTANT: do NOT replace the pinned nvngx_dlssnr.dll. The upstream runtime is
+# ShortFuse 310.8.SF-v2, specifically patched for Turing/Ampere/Ada/Blackwell.
+# The user-supplied Streamline pack contains a different signed 310.8 runtime;
+# replacing SF-v2 with it was the cause of the Feature-18 PlatformError path.
+# DLSSG is also irrelevant to this 1:1 neural-rendering bridge and is not staged.
+$preservedNeuralPath = Join-Path $InstalledNeural 'nvngx_dlssnr.dll'
+$preservedNeuralBefore = if (Test-Path -LiteralPath $preservedNeuralPath) {
+    (Get-FileHash -LiteralPath $preservedNeuralPath -Algorithm SHA256).Hash.ToLowerInvariant()
+} else { '' }
+
 $copyNames = @(
     'version.dll',
     '_nvngx.dll',
     'nvngx.dll',
     'nvngx_dlss.dll',
-    'nvngx_dlssg.dll',
-    'nvngx_dlssnr.dll',
     'sl.common.dll',
     'sl.dlss.dll',
     'sl.dlss_g.dll',
@@ -119,6 +128,10 @@ $hasStreamlineInterposer = Test-Path -LiteralPath (Join-Path $InstalledNeural 's
 $hasStreamlineNr = Test-Path -LiteralPath (Join-Path $InstalledNeural 'sl.dlss_nr.dll')
 $hasDlss = Test-Path -LiteralPath (Join-Path $InstalledNeural 'nvngx_dlss.dll')
 $hasDlssNr = Test-Path -LiteralPath (Join-Path $InstalledNeural 'nvngx_dlssnr.dll')
+$preservedNeuralAfter = if ($hasDlssNr) {
+    (Get-FileHash -LiteralPath (Join-Path $InstalledNeural 'nvngx_dlssnr.dll') -Algorithm SHA256).Hash.ToLowerInvariant()
+} else { '' }
+$neuralRuntimePreserved = $preservedNeuralBefore -and ($preservedNeuralBefore -eq $preservedNeuralAfter)
 $hasStreamlineProxy = $hasVersionProxy -and $hasStreamlineInterposer -and $hasStreamlineNr -and $hasDlss -and $hasDlssNr
 
 $mode =
@@ -136,6 +149,9 @@ $report = New-Object Text.StringBuilder
 [void]$report.AppendLine("version.dll proxy present: $hasVersionProxy")
 [void]$report.AppendLine("Streamline interposer present: $hasStreamlineInterposer")
 [void]$report.AppendLine("Streamline NR plugin present: $hasStreamlineNr")
+[void]$report.AppendLine("Pinned neural runtime preserved: $neuralRuntimePreserved")
+[void]$report.AppendLine("Pinned neural runtime SHA256 before: $preservedNeuralBefore")
+[void]$report.AppendLine("Pinned neural runtime SHA256 after:  $preservedNeuralAfter")
 [void]$report.AppendLine('')
 [void]$report.AppendLine('Copied overrides:')
 if ($copied.Count -eq 0) {
@@ -171,5 +187,6 @@ if ($hasStreamlineProxy) {
     Mode = $mode
     LocalCore = $hasLocalCore
     StreamlineProxy = $hasStreamlineProxy
+    NeuralRuntimePreserved = $neuralRuntimePreserved
     CopiedCount = $copied.Count
 } | ConvertTo-Json -Compress
