@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <cwctype>
 #include <filesystem>
-#include <limits>
 #include <string>
 #include <string_view>
 
@@ -54,6 +53,17 @@ bool SupportedBrowser(std::wstring_view process)
            process == L"brave.exe";
 }
 
+bool SupportedXboxApp(std::wstring_view process)
+{
+    // Current Xbox app builds normally expose XboxPcApp.exe. Keep a couple of
+    // historical/package-host fallbacks so capture keeps working across app
+    // updates without coupling the renderer to one executable name.
+    return process == L"xboxpcapp.exe" ||
+           process == L"xbox.exe" ||
+           process == L"gamingapp.exe" ||
+           process == L"applicationframehost.exe";
+}
+
 std::wstring WindowTitle(HWND hwnd)
 {
     const int length = GetWindowTextLengthW(hwnd);
@@ -67,6 +77,7 @@ std::wstring WindowTitle(HWND hwnd)
 }
 
 struct SearchState {
+    CaptureTargetPreference preference{CaptureTargetPreference::Auto};
     BrowserWindowInfo best;
     unsigned long long bestScore{};
 };
@@ -80,7 +91,36 @@ BOOL CALLBACK EnumProc(HWND hwnd, LPARAM param)
     }
 
     const std::wstring process = ProcessNameForWindow(hwnd);
-    if (!SupportedBrowser(process)) return TRUE;
+    const std::wstring title = WindowTitle(hwnd);
+    const bool browser = SupportedBrowser(process);
+    const bool xboxProcess = SupportedXboxApp(process);
+    const bool xboxTitle =
+        ContainsI(title, L"xbox") || ContainsI(title, L"cloud gaming");
+
+    bool candidate = false;
+    CaptureTargetPreference kind = CaptureTargetPreference::Auto;
+
+    switch (state.preference) {
+        case CaptureTargetPreference::XboxApp:
+            candidate = xboxProcess && (process != L"applicationframehost.exe" || xboxTitle);
+            kind = CaptureTargetPreference::XboxApp;
+            break;
+        case CaptureTargetPreference::Browser:
+            candidate = browser;
+            kind = CaptureTargetPreference::Browser;
+            break;
+        case CaptureTargetPreference::Auto:
+            if (xboxProcess && (process != L"applicationframehost.exe" || xboxTitle)) {
+                candidate = true;
+                kind = CaptureTargetPreference::XboxApp;
+            } else if (browser) {
+                candidate = true;
+                kind = CaptureTargetPreference::Browser;
+            }
+            break;
+    }
+
+    if (!candidate) return TRUE;
 
     RECT bounds{};
     if (!GetVisualWindowBounds(hwnd, bounds)) return TRUE;
@@ -88,16 +128,22 @@ BOOL CALLBACK EnumProc(HWND hwnd, LPARAM param)
     const long height = bounds.bottom - bounds.top;
     if (width < 640 || height < 360) return TRUE;
 
-    const std::wstring title = WindowTitle(hwnd);
     const unsigned long long area =
         static_cast<unsigned long long>(width) * static_cast<unsigned long long>(height);
 
-    // Prefer a window whose title explicitly identifies Xbox/xCloud. The large
-    // bonus makes a smaller xCloud app window beat an unrelated browser window.
     unsigned long long score = area;
-    if (ContainsI(title, L"xbox")) score += (1ull << 62);
-    if (ContainsI(title, L"cloud gaming")) score += (1ull << 61);
-    if (ContainsI(title, L"xcloud")) score += (1ull << 60);
+
+    if (kind == CaptureTargetPreference::XboxApp) {
+        // In Auto mode, prefer Xbox App decisively over a browser because the
+        // native app has the cleanest controller path.
+        score += (1ull << 62);
+        if (process == L"xboxpcapp.exe") score += (1ull << 61);
+        if (xboxTitle) score += (1ull << 60);
+    } else {
+        if (ContainsI(title, L"xbox")) score += (1ull << 59);
+        if (ContainsI(title, L"cloud gaming")) score += (1ull << 58);
+        if (ContainsI(title, L"xcloud")) score += (1ull << 57);
+    }
 
     if (!state.best.hwnd || score > state.bestScore) {
         state.bestScore = score;
@@ -105,6 +151,7 @@ BOOL CALLBACK EnumProc(HWND hwnd, LPARAM param)
         state.best.processName = process;
         state.best.title = title;
         state.best.visualBounds = bounds;
+        state.best.kind = kind;
     }
     return TRUE;
 }
@@ -124,9 +171,20 @@ bool GetVisualWindowBounds(HWND hwnd, RECT& bounds)
            bounds.right > bounds.left && bounds.bottom > bounds.top;
 }
 
-BrowserWindowInfo FindBestXCloudWindow()
+BrowserWindowInfo FindBestTargetWindow(CaptureTargetPreference preference)
 {
     SearchState state;
+    state.preference = preference;
     EnumWindows(EnumProc, reinterpret_cast<LPARAM>(&state));
     return state.best;
+}
+
+BrowserWindowInfo FindBestXCloudWindow()
+{
+    return FindBestTargetWindow(CaptureTargetPreference::Browser);
+}
+
+BrowserWindowInfo FindBestXboxAppWindow()
+{
+    return FindBestTargetWindow(CaptureTargetPreference::XboxApp);
 }
