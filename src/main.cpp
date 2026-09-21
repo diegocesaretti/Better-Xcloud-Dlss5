@@ -28,6 +28,10 @@
 
 namespace {
 
+#ifndef WDA_EXCLUDEFROMCAPTURE
+#define WDA_EXCLUDEFROMCAPTURE 0x00000011
+#endif
+
 constexpr wchar_t kOverlayClass[] = L"BetterXcloudDLSS5Overlay";
 LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
@@ -415,10 +419,34 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     liveLog.flush();
 
     WindowCapture capture;
-    if (!capture.Start(browser.hwnd)) {
+    const bool preferMonitorCrop =
+        browser.kind == CaptureTargetPreference::XboxApp;
+
+    bool captureStarted = preferMonitorCrop
+        ? capture.StartMonitorCrop(browser.hwnd)
+        : capture.Start(browser.hwnd);
+
+    std::wstring captureMode =
+        preferMonitorCrop ? L"monitor-crop" : L"window";
+
+    if (!captureStarted && preferMonitorCrop) {
+        const std::wstring monitorError = capture.LastError();
+        captureStarted = capture.Start(browser.hwnd);
+        captureMode = L"window-fallback";
+        panel->SetStatus(
+            L"Monitor-rate Xbox capture failed; using window capture fallback.\r\n" +
+            monitorError);
+    }
+
+    if (!captureStarted) {
         ErrorBox(capture.LastError());
         return 12;
     }
+
+    liveLog << "captureMode=";
+    for (wchar_t ch : captureMode) liveLog << (ch <= 0x7f ? char(ch) : '?');
+    liveLog << "\n";
+    liveLog.flush();
 
     CapturedFrame frame;
     if (!WaitForFirstFrame(capture, frame)) {
@@ -442,6 +470,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ErrorBox(L"Unable to create the processed-video overlay.");
         return 14;
     }
+
+    const BOOL overlayExcludedFromCapture =
+        SetWindowDisplayAffinity(overlay, WDA_EXCLUDEFROMCAPTURE);
+    liveLog << "overlayExcludedFromCapture="
+            << (overlayExcludedFromCapture ? 1 : 0) << "\n";
+    liveLog.flush();
 
     // Keep the carrier 1:1. DLAA is the hook-visible NGX contract that the
     // upstream project uses when neural rendering should run without spatial
@@ -523,6 +557,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     std::uint64_t statsInputFrames = 0;
     std::uint64_t statsRenderedFrames = 0;
     std::uint64_t statsDroppedFrames = 0;
+    std::uint64_t statsArrivalStart = capture.FrameArrivals();
     double statsProcessingMs = 0.0;
 
     while (running && IsWindow(browser.hwnd)) {
@@ -575,6 +610,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
         if (now >= nextPositionSync) {
             PlaceOverlay(overlay, browser.hwnd);
+
+            if (capture.UsingMonitorCrop() &&
+                !capture.UpdateMonitorCrop(browser.hwnd)) {
+                liveLog << "exitReason=monitor-crop-update-failed\n";
+                liveLog.flush();
+                panel->SetStatus(
+                    L"Xbox App moved to another monitor or its capture rectangle became invalid. Stop and restart the mirror.");
+                running = false;
+                break;
+            }
+
             nextPositionSync = now + std::chrono::milliseconds(250);
 
             const bool shouldShow =
@@ -734,9 +780,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             const double avgMs = statsInputFrames
                 ? statsProcessingMs / static_cast<double>(statsInputFrames)
                 : 0.0;
+            const std::uint64_t arrivalNow = capture.FrameArrivals();
+            const std::uint64_t arrivals =
+                arrivalNow >= statsArrivalStart ? arrivalNow - statsArrivalStart : 0;
+            const double captureArrivalFps = statsSeconds > 0.0
+                ? static_cast<double>(arrivals) / statsSeconds
+                : 0.0;
 
             liveLog << std::fixed << std::setprecision(2)
                     << "fps=" << fps
+                    << " captureArrivalFps=" << captureArrivalFps
                     << " avgProcessingMs=" << avgMs
                     << " neuralGpuMs=" << renderer->LastNeuralGpuMs()
                     << " droppedCaptureFrames=" << statsDroppedFrames
@@ -751,7 +804,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                   << L"  [" << browser.processName << L"]\r\n"
                   << L"Capture: " << frame.width << L"x" << frame.height << L"\r\n"
                   << L"DLSS carrier: active\r\n"
-                  << L"FPS: " << fps << L"\r\n"
+                  << L"Capture mode: " << captureMode << L"\r\n"
+                  << L"Capture arrivals: " << captureArrivalFps << L" fps\r\n"
+                  << L"Rendered mirror: " << fps << L" fps\r\n"
                   << L"Average processing: " << avgMs << L" ms\r\n"
                   << L"Neural GPU: " << renderer->LastNeuralGpuMs() << L" ms\r\n"
                   << L"Dropped capture frames: " << statsDroppedFrames << L"\r\n"
@@ -774,6 +829,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             statsInputFrames = 0;
             statsRenderedFrames = 0;
             statsDroppedFrames = 0;
+            statsArrivalStart = arrivalNow;
             statsProcessingMs = 0.0;
         }
     }
