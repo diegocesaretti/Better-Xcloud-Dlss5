@@ -222,16 +222,16 @@ MFGHotkeys=false
 "@ | Set-Content -LiteralPath (Join-Path $installedNeural 'dlss-enabler.ini') -Encoding ASCII
         Write-Host 'DLSS Enabler UI disabled; compatibility shim will run headless.' -ForegroundColor Green
 
-        # Keep OptiScaler on the same setup key. The native host leaves Chrome
-        # foreground and temporarily routes mouse clicks to the no-activate
-        # overlay instead of moving system focus away from xCloud.
+        # Keep OptiScaler's own internal shortcut away from the bridge setup
+        # keys. Insert/F8 belong to XCloudDLSS5Host and reliably open/close the
+        # ReShade/RenoDX setup surface; F10 remains available for OptiScaler.
         $optiIni = Join-Path $installedNeural 'OptiScaler.ini'
         if (-not (Test-Path -LiteralPath $optiIni)) {
             New-Item -ItemType File -Path $optiIni -Force | Out-Null
         }
         [void][BetterXcloudIni]::WritePrivateProfileString('Menu', 'OverlayMenu', 'true', $optiIni)
-        [void][BetterXcloudIni]::WritePrivateProfileString('Menu', 'ShortcutKey', '0x2D', $optiIni)
-        Write-Host 'OptiScaler menu configured on Insert.' -ForegroundColor Green
+        [void][BetterXcloudIni]::WritePrivateProfileString('Menu', 'ShortcutKey', '0x79', $optiIni)
+        Write-Host 'OptiScaler native menu configured on F10; bridge setup uses Insert/F8.' -ForegroundColor Green
     }
 
     New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
@@ -265,7 +265,8 @@ Streamline/version.dll compatibility route: $streamlineCompat
     Write-Host "Installed to: $InstallRoot" -ForegroundColor Green
     Write-Host ''
     Write-Host 'Use Start > Better Xcloud DLSS5.'
-    Write-Host 'Insert = open/close OptiScaler setup (mouse enabled while open)'
+    Write-Host 'Insert or F8 = open/close ReShade/RenoDX setup (mouse enabled while open)'
+    Write-Host 'F10 = OptiScaler native menu'
     Write-Host 'F7 = show/hide processed overlay'
     Write-Host 'F9 = stop the DLSS host'
     Write-Host ''
