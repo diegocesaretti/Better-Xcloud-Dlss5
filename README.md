@@ -1,6 +1,6 @@
 # Better Xcloud DLSS5
 
-Experimental Windows bridge that applies the **DLSS 5 neural-rendering pipeline used by DLSS5 Video Player to Xbox Cloud Gaming**, while leaving xCloud networking, audio and controller input in the browser.
+Experimental Windows bridge that applies the **DLSS 5 neural-rendering pipeline used by DLSS5 Video Player to Xbox Cloud Gaming**, while leaving networking, audio and controller input inside the selected Xbox App or browser target.
 
 > **Status: early alpha.** The first milestone is intentionally conservative: capture the xCloud browser window with Windows Graphics Capture, process only the newest frame, and present the neural result in a full-window click-through mirror. This lets us measure real latency on hardware such as the GTX 1660 Super before investing in a deeper browser/native zero-copy path.
 
@@ -11,8 +11,11 @@ Experimental Windows bridge that applies the **DLSS 5 neural-rendering pipeline 
 - Keep Better xCloud responsible for xCloud/WebRTC/input features.
 - Keep the DLSS5 runtime isolated from the browser.
 - Never queue old cloud frames: newest frame wins.
-- Attach-only mirror mode: the host never launches, focuses, subclasses or injects input into Chrome.
-- F7 toggles the processed mirror; F9 exits the host.
+- Native **Control & Debug** panel with Xbox App / Browser / Auto target selection.
+- The mirror never injects controller, keyboard or mouse input into the selected target.
+- Live FPS, processing time, neural GPU time, VRAM, dropped frames and DLSS evaluation counters.
+- One-click access to logs, ReShade.ini, OptiScaler.ini and clipboard diagnostics.
+- Basic Neural Uplift / NR Upscaling settings without opening an injected overlay.
 - No redistribution of the experimental neural runtime from this repository.
 
 ## How it works
@@ -21,7 +24,7 @@ Experimental Windows bridge that applies the **DLSS 5 neural-rendering pipeline 
 Xbox Cloud Gaming (WebRTC)
           |
           v
-Edge / Chrome + Better xCloud
+Xbox App OR Edge / Chrome + Better xCloud
           |
           | Windows Graphics Capture
           v
@@ -35,7 +38,7 @@ DLSS5 Video Player renderer / RenoDX Feature 18
 click-through overlay
 ```
 
-The browser owns all input at all times. Open Xbox Cloud Gaming normally first and verify the controller works, then start the DLSS5 host. The host attaches to the existing browser HWND, captures the entire window, processes it, and presents a permanently non-activating click-through mirror. There is no interactive ReShade/OptiScaler menu in this mode; configuration is applied from INI files so the browser's Gamepad API is never intentionally disturbed.
+The selected target owns all input at all times. Start **Better Xcloud DLSS5** to open the separate Control & Debug panel, choose **Xbox App (recommended)**, **Browser**, or **Auto**, then start the mirror. The host captures the entire selected top-level HWND, processes it, and presents a permanently passive click-through mirror. ReShade/OptiScaler menus are not used for routine configuration; common settings and diagnostics are exposed in the separate panel instead.
 
 ## Installation target
 
