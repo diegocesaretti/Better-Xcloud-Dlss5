@@ -77,15 +77,19 @@ jobs:
           $dest = Join-Path $root 'dest'
           $work = Join-Path $root 'work'
           New-Item -ItemType Directory -Path $source,$dest,$work -Force | Out-Null
-          'fake ngx core' | Set-Content -LiteralPath (Join-Path $source '_nvngx.dll') -Encoding ascii
+          'fake proxy' | Set-Content -LiteralPath (Join-Path $source 'version.dll') -Encoding ascii
+          'fake interposer' | Set-Content -LiteralPath (Join-Path $source 'sl.interposer.dll') -Encoding ascii
+          'fake NR plugin' | Set-Content -LiteralPath (Join-Path $source 'sl.dlss_nr.dll') -Encoding ascii
+          'fake DLSS runtime' | Set-Content -LiteralPath (Join-Path $source 'nvngx_dlss.dll') -Encoding ascii
           'fake neural runtime' | Set-Content -LiteralPath (Join-Path $source 'nvngx_dlssnr.dll') -Encoding ascii
           $zip = Join-Path $root 'GTX1660-test.zip'
           Compress-Archive -Path (Join-Path $source '*') -DestinationPath $zip -Force
           $report = Join-Path $root 'report.txt'
-          & ./installer/Import-CompatibilityPack.ps1 -ZipPath $zip -InstalledNeural $dest -WorkRoot $work -ReportPath $report | Out-Host
-          if (-not (Test-Path (Join-Path $dest '_nvngx.dll'))) { throw 'Importer did not stage _nvngx.dll.' }
-          if (-not (Test-Path (Join-Path $dest 'nvngx_dlssnr.dll'))) { throw 'Importer did not stage nvngx_dlssnr.dll.' }
-          if (-not (Select-String -LiteralPath $report -SimpleMatch 'Local NGX core override present: True' -Quiet)) { throw 'Importer report did not record local core.' }
+          & ./installer/Import-CompatibilityPack.ps1 -PackPath $zip -InstalledNeural $dest -WorkRoot $work -ReportPath $report | Out-Host
+          foreach ($name in @('version.dll','sl.interposer.dll','sl.dlss_nr.dll','nvngx_dlss.dll','nvngx_dlssnr.dll')) {
+            if (-not (Test-Path (Join-Path $dest $name))) { throw "Importer did not stage $name." }
+          }
+          if (-not (Select-String -LiteralPath $report -SimpleMatch 'Compatibility mode: streamline-version-proxy' -Quiet)) { throw 'Importer report did not record the Streamline proxy route.' }
 
       - name: Configure
         shell: pwsh
