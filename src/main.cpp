@@ -442,12 +442,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return 10;
     }
 
-    RegisterHotKey(nullptr, kHotkeyToggle, MOD_NOREPEAT, VK_F7);
-    RegisterHotKey(nullptr, kHotkeyExit, MOD_NOREPEAT, VK_F9);
+    const bool hotkeyToggleRegistered =
+        RegisterHotKey(nullptr, kHotkeyToggle, MOD_NOREPEAT, VK_F7) != FALSE;
+    const bool hotkeyExitRegistered =
+        RegisterHotKey(nullptr, kHotkeyExit, MOD_NOREPEAT, VK_F9) != FALSE;
     // Use real system hotkeys instead of polling GetAsyncKeyState. This keeps
     // setup reliable even while ReShade/OptiScaler owns the foreground window.
-    RegisterHotKey(nullptr, kHotkeySetupInsert, MOD_NOREPEAT, VK_INSERT);
-    RegisterHotKey(nullptr, kHotkeySetupF8, MOD_NOREPEAT, VK_F8);
+    const bool hotkeySetupInsertRegistered =
+        RegisterHotKey(nullptr, kHotkeySetupInsert, MOD_NOREPEAT, VK_INSERT) != FALSE;
+    const bool hotkeySetupF8Registered =
+        RegisterHotKey(nullptr, kHotkeySetupF8, MOD_NOREPEAT, VK_F8) != FALSE;
 
     BrowserWindowInfo browser = WaitForBrowserWindow();
     if (!browser.hwnd) {
@@ -475,6 +479,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     liveLog << "versionModule=";
     for (wchar_t ch : loadedVersionPath) liveLog << (ch <= 0x7f ? char(ch) : '?');
     liveLog << "\n";
+    liveLog << "hotkeys F7=" << (hotkeyToggleRegistered ? 1 : 0)
+            << " F9=" << (hotkeyExitRegistered ? 1 : 0)
+            << " Insert=" << (hotkeySetupInsertRegistered ? 1 : 0)
+            << " F8=" << (hotkeySetupF8Registered ? 1 : 0)
+            << "\n";
     liveLog.flush();
 
     WindowCapture capture;
