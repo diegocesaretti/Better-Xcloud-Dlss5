@@ -86,14 +86,13 @@ $env:BETTER_XCLOUD_DLSS5_ALLOW_UNSUPPORTED_SR = '1'
 # Starting from neural-runtime is intentional: the upstream dxgi.dll,
 # RenoDX add-on and locked neural DLLs are local to this process only.
 #
-# The known-good GTX/Turing compatibility proxy was previously starting with
-# no command-line switches, so it delegated NVAPI architecture reporting to the
-# physical GTX card. Force the proxy's own embedded NVAPI + HAGS emulation and
-# an Ada target for the experimental Feature-18 path.
+# Keep the GPU identity Turing. The pinned ShortFuse 310.8.SF-v2 neural runtime
+# is specifically modified for Turing, so pretending the GTX 1660 is Ada can
+# select an incompatible NR path and produce NGX PlatformError. version.dll may
+# still provide its normal DXGI/NVAPI compatibility hooks for the DLSS carrier.
 $hostArgs = @(
-    '--dlss-hags=on',
-    '--dlss-nvapi=embedded',
-    '--dlss-arch=ada',
+    '--dlss-arch=turing',
+    '--dlss-hags=sys',
     '--dlss-logging=on'
 )
 
