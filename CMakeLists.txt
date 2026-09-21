@@ -31,6 +31,8 @@ set(DLSS_NGX_LIBRARY "$<IF:$<CONFIG:Debug>,nvsdk_ngx_d_dbg,nvsdk_ngx_d>")
 
 add_executable(XCloudDLSS5Host WIN32
     src/main.cpp
+    src/ControlPanel.cpp
+    src/ControlPanel.h
     src/WindowFinder.cpp
     src/WindowFinder.h
     src/WindowCapture.cpp
