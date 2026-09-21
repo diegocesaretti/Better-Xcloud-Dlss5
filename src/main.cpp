@@ -17,7 +17,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
-#include <iterator>
 #include <string>
 #include <thread>
 
@@ -28,17 +27,14 @@ namespace {
 constexpr wchar_t kOverlayClass[] = L"BetterXcloudDLSS5Overlay";
 constexpr int kHotkeyToggle = 1;
 constexpr int kHotkeyExit = 2;
-constexpr int kHotkeySetupInsert = 3;
-constexpr int kHotkeySetupF8 = 4;
-bool g_overlayInteractive = false;
 
 LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     switch (message) {
         case WM_NCHITTEST:
-            return g_overlayInteractive ? HTCLIENT : HTTRANSPARENT;
+            return HTTRANSPARENT;
         case WM_MOUSEACTIVATE:
-            return g_overlayInteractive ? MA_ACTIVATE : MA_NOACTIVATE;
+            return MA_NOACTIVATE;
         case WM_ERASEBKGND:
             return 1;
         case WM_CLOSE:
@@ -92,117 +88,6 @@ void PlaceOverlay(HWND overlay, HWND target)
         SWP_NOACTIVATE | SWP_NOOWNERZORDER);
 }
 
-void SetOverlayInteractive(HWND overlay, bool interactive)
-{
-    if (!overlay) return;
-
-    LONG_PTR exStyle = GetWindowLongPtrW(overlay, GWL_EXSTYLE);
-    if (interactive) {
-        exStyle &= ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
-    } else {
-        exStyle |= static_cast<LONG_PTR>(WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
-    }
-    SetWindowLongPtrW(overlay, GWL_EXSTYLE, exStyle);
-    g_overlayInteractive = interactive;
-
-    SetWindowPos(
-        overlay,
-        HWND_TOP,
-        0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER |
-            SWP_FRAMECHANGED | (interactive ? 0 : SWP_NOACTIVATE));
-}
-
-void SendVirtualKey(UINT vk)
-{
-    INPUT inputs[2]{};
-    inputs[0].type = INPUT_KEYBOARD;
-    inputs[0].ki.wVk = static_cast<WORD>(vk);
-    inputs[1].type = INPUT_KEYBOARD;
-    inputs[1].ki.wVk = static_cast<WORD>(vk);
-    inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
-    SendInput(2, inputs, sizeof(INPUT));
-}
-
-bool ForegroundMatches(HWND hwnd)
-{
-    if (!hwnd || !IsWindow(hwnd)) return false;
-    HWND foreground = GetForegroundWindow();
-    if (!foreground) return false;
-    return foreground == hwnd ||
-           GetAncestor(foreground, GA_ROOT) == GetAncestor(hwnd, GA_ROOT);
-}
-
-bool ActivateWindow(HWND hwnd)
-{
-    if (!hwnd || !IsWindow(hwnd)) return false;
-
-    hwnd = GetAncestor(hwnd, GA_ROOT);
-    if (!hwnd) return false;
-
-    if (ForegroundMatches(hwnd)) return true;
-
-    ShowWindowAsync(hwnd, IsIconic(hwnd) ? SW_RESTORE : SW_SHOW);
-
-    const DWORD currentThread = GetCurrentThreadId();
-    DWORD targetProcess = 0;
-    const DWORD targetThread = GetWindowThreadProcessId(hwnd, &targetProcess);
-
-    for (int attempt = 0; attempt < 4; ++attempt) {
-        HWND foreground = GetForegroundWindow();
-        DWORD foregroundProcess = 0;
-        const DWORD foregroundThread =
-            foreground ? GetWindowThreadProcessId(foreground, &foregroundProcess) : 0;
-
-        bool attachedTarget = false;
-        bool attachedForeground = false;
-
-        if (targetThread && targetThread != currentThread) {
-            attachedTarget =
-                AttachThreadInput(currentThread, targetThread, TRUE) != FALSE;
-        }
-        if (foregroundThread && foregroundThread != currentThread &&
-            foregroundThread != targetThread) {
-            attachedForeground =
-                AttachThreadInput(currentThread, foregroundThread, TRUE) != FALSE;
-        }
-
-        BringWindowToTop(hwnd);
-        SetWindowPos(
-            hwnd, HWND_TOP, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER);
-        SetForegroundWindow(hwnd);
-        SetActiveWindow(hwnd);
-        SetFocus(hwnd);
-
-        if (attachedForeground) {
-            AttachThreadInput(currentThread, foregroundThread, FALSE);
-        }
-        if (attachedTarget) {
-            AttachThreadInput(currentThread, targetThread, FALSE);
-        }
-
-        if (ForegroundMatches(hwnd)) return true;
-        Sleep(35);
-    }
-
-    // Windows' foreground lock can still reject SetForegroundWindow even with
-    // attached input queues. SwitchToThisWindow is kept as a last-resort local
-    // fallback so controller focus returns to xCloud after the setup overlay.
-    using SwitchToThisWindowFn = void (WINAPI*)(HWND, BOOL);
-    HMODULE user32 = GetModuleHandleW(L"user32.dll");
-    if (user32) {
-        auto switchWindow = reinterpret_cast<SwitchToThisWindowFn>(
-            GetProcAddress(user32, "SwitchToThisWindow"));
-        if (switchWindow) {
-            switchWindow(hwnd, TRUE);
-            Sleep(50);
-        }
-    }
-
-    return ForegroundMatches(hwnd);
-}
-
 int ConnectedXInputControllers()
 {
     int count = 0;
@@ -213,91 +98,6 @@ int ConnectedXInputControllers()
         }
     }
     return count;
-}
-
-std::wstring WindowClassName(HWND hwnd)
-{
-    wchar_t buffer[256]{};
-    const int count = GetClassNameW(hwnd, buffer, static_cast<int>(std::size(buffer)));
-    return count > 0 ? std::wstring(buffer, static_cast<size_t>(count)) : std::wstring();
-}
-
-struct BrowserContentSearch {
-    HWND best{};
-    long long bestArea{-1};
-};
-
-BOOL CALLBACK BrowserContentEnumProc(HWND hwnd, LPARAM param)
-{
-    auto& state = *reinterpret_cast<BrowserContentSearch*>(param);
-    const std::wstring cls = WindowClassName(hwnd);
-    if (cls.find(L"Chrome_RenderWidgetHostHWND") == std::wstring::npos &&
-        cls.find(L"RenderWidgetHost") == std::wstring::npos) {
-        return TRUE;
-    }
-
-    RECT rc{};
-    if (!GetWindowRect(hwnd, &rc)) return TRUE;
-    const long long area =
-        static_cast<long long>(std::max(0L, rc.right - rc.left)) *
-        static_cast<long long>(std::max(0L, rc.bottom - rc.top));
-    if (area > state.bestArea) {
-        state.bestArea = area;
-        state.best = hwnd;
-    }
-    return TRUE;
-}
-
-HWND FindBrowserContentWindow(HWND browserRoot)
-{
-    BrowserContentSearch state;
-    EnumChildWindows(browserRoot, BrowserContentEnumProc,
-                     reinterpret_cast<LPARAM>(&state));
-    return state.best;
-}
-
-bool FocusBrowserContent(HWND browserRoot)
-{
-    if (!browserRoot || !IsWindow(browserRoot)) return false;
-
-    browserRoot = GetAncestor(browserRoot, GA_ROOT);
-    HWND content = FindBrowserContentWindow(browserRoot);
-
-    const bool foregroundOk = ActivateWindow(browserRoot);
-
-    DWORD processId = 0;
-    const DWORD browserThread = GetWindowThreadProcessId(
-        content ? content : browserRoot, &processId);
-    const DWORD currentThread = GetCurrentThreadId();
-    bool attached = false;
-    if (browserThread && browserThread != currentThread) {
-        attached = AttachThreadInput(currentThread, browserThread, TRUE) != FALSE;
-    }
-
-    if (content && IsWindow(content)) {
-        SetFocus(content);
-        PostMessageW(content, WM_SETFOCUS, 0, 0);
-    } else {
-        SetFocus(browserRoot);
-    }
-
-    if (attached) {
-        AttachThreadInput(currentThread, browserThread, FALSE);
-    }
-
-    return foregroundOk && ForegroundMatches(browserRoot);
-}
-
-std::wstring BrowserFocusedClass(HWND browserRoot)
-{
-    DWORD pid = 0;
-    const DWORD thread = GetWindowThreadProcessId(browserRoot, &pid);
-    if (!thread) return {};
-
-    GUITHREADINFO gui{};
-    gui.cbSize = sizeof(gui);
-    if (!GetGUIThreadInfo(thread, &gui)) return {};
-    return WindowClassName(gui.hwndFocus);
 }
 
 bool TargetHasFocus(HWND target)
@@ -446,12 +246,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         RegisterHotKey(nullptr, kHotkeyToggle, MOD_NOREPEAT, VK_F7) != FALSE;
     const bool hotkeyExitRegistered =
         RegisterHotKey(nullptr, kHotkeyExit, MOD_NOREPEAT, VK_F9) != FALSE;
-    // Use real system hotkeys instead of polling GetAsyncKeyState. This keeps
-    // setup reliable even while ReShade/OptiScaler owns the foreground window.
-    const bool hotkeySetupInsertRegistered =
-        RegisterHotKey(nullptr, kHotkeySetupInsert, MOD_NOREPEAT, VK_INSERT) != FALSE;
-    const bool hotkeySetupF8Registered =
-        RegisterHotKey(nullptr, kHotkeySetupF8, MOD_NOREPEAT, VK_F8) != FALSE;
+
 
     BrowserWindowInfo browser = WaitForBrowserWindow();
     if (!browser.hwnd) {
@@ -465,6 +260,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         ModuleDirectory() / L"XCloudDLSS5-live.log",
         std::ios::out | std::ios::trunc);
     liveLog << "Better Xcloud DLSS5 live session\n";
+    liveLog << "mode=attach-only-full-window-mirror inputPolicy=browser-owned\n";
     liveLog << "browserProcess=";
     for (wchar_t ch : browser.processName) liveLog << (ch <= 0x7f ? char(ch) : '?');
     liveLog << " title=";
@@ -481,8 +277,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     liveLog << "\n";
     liveLog << "hotkeys F7=" << (hotkeyToggleRegistered ? 1 : 0)
             << " F9=" << (hotkeyExitRegistered ? 1 : 0)
-            << " Insert=" << (hotkeySetupInsertRegistered ? 1 : 0)
-            << " F8=" << (hotkeySetupF8Registered ? 1 : 0)
+            << " Insert=unregistered F8=unregistered"
             << "\n";
     liveLog.flush();
 
@@ -565,28 +360,21 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     liveLog << "renderer=initialized dlssAvailable=1\n";
 
-    // Do not touch browser focus during normal startup. The overlay is created
-    // non-activating, so the browser keeps the exact focus/visibility state it
-    // had before the native renderer started.
+    // Mirror mode is strictly observational: never activate, focus, subclass or
+    // synthesize input into the browser. xCloud owns keyboard/mouse/gamepad.
     const int xinputControllers = ConnectedXInputControllers();
     liveLog << "xinputControllersVisibleToHost=" << xinputControllers << "\n";
     liveLog << "browserForegroundAfterInit="
-            << (ForegroundMatches(browser.hwnd) ? 1 : 0)
+            << (TargetHasFocus(browser.hwnd) ? 1 : 0)
             << " foregroundHwnd=0x" << std::hex
             << reinterpret_cast<std::uintptr_t>(GetForegroundWindow())
-            << std::dec
-            << " browserFocusClass=";
-    for (wchar_t ch : BrowserFocusedClass(browser.hwnd)) {
-        liveLog << (ch <= 0x7f ? char(ch) : '?');
-    }
-    liveLog << "\n";
+            << std::dec << "\n";
     liveLog.flush();
 
     TemporalGuideGenerator guides;
     bool overlayEnabled = true;
     bool running = true;
     bool forceReset = true;
-    bool setupMode = false;
     std::uint64_t lastSequence = 0;
 
     const auto ptsOrigin = std::chrono::steady_clock::now();
@@ -609,36 +397,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                     liveLog << "exitReason=hotkey-F9\n";
                     liveLog.flush();
                     running = false;
-                } else if (msg.wParam == kHotkeySetupInsert ||
-                           msg.wParam == kHotkeySetupF8) {
-                    const wchar_t* trigger =
-                        msg.wParam == kHotkeySetupInsert ? L"Insert" : L"F8";
-
-                    if (!setupMode) {
-                        setupMode = true;
-                        SetOverlayInteractive(overlay, true);
-                        PlaceOverlay(overlay, browser.hwnd);
-                        ShowWindow(overlay, SW_SHOW);
-                        const bool focused = ActivateWindow(overlay);
-                        // ReShade's private overlay key is Home. Send a real
-                        // keyboard event while the render window owns focus so
-                        // ReShade's normal input capture path receives it.
-                        SendVirtualKey(VK_HOME);
-                        liveLog << "setupMode=entered trigger="
-                                << (msg.wParam == kHotkeySetupInsert ? "Insert" : "F8")
-                                << " overlayFocus=" << (focused ? 1 : 0) << "\n";
-                    } else {
-                        // Close ReShade before releasing mouse capture.
-                        SendVirtualKey(VK_HOME);
-                        Sleep(80);
-                        setupMode = false;
-                        SetOverlayInteractive(overlay, false);
-                        const bool focused = FocusBrowserContent(browser.hwnd);
-                        liveLog << "setupMode=exited trigger="
-                                << (msg.wParam == kHotkeySetupInsert ? "Insert" : "F8")
-                                << " browserFocus=" << (focused ? 1 : 0) << "\n";
-                    }
-                    liveLog.flush();
                 }
             }
             TranslateMessage(&msg);
@@ -653,7 +411,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             nextPositionSync = now + std::chrono::milliseconds(250);
 
             const bool shouldShow =
-                overlayEnabled && (setupMode || TargetHasFocus(browser.hwnd));
+                overlayEnabled && TargetHasFocus(browser.hwnd);
             if (shouldShow) {
                 ShowWindow(overlay, SW_SHOWNOACTIVATE);
             } else {
@@ -705,12 +463,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             }
 
             PlaceOverlay(overlay, browser.hwnd);
-            SetOverlayInteractive(overlay, setupMode);
-            if (setupMode) {
-                ActivateWindow(overlay);
-            } else {
-                FocusBrowserContent(browser.hwnd);
-            }
             frame = std::move(latest);
             previousFrameTime = std::chrono::steady_clock::now();
             forceReset = true;
@@ -847,7 +599,5 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     UnregisterHotKey(nullptr, kHotkeyToggle);
     UnregisterHotKey(nullptr, kHotkeyExit);
-    UnregisterHotKey(nullptr, kHotkeySetupInsert);
-    UnregisterHotKey(nullptr, kHotkeySetupF8);
     return 0;
 }
