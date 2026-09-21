@@ -34,6 +34,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
     switch (message) {
         case WM_NCHITTEST:
             return g_overlayInteractive ? HTCLIENT : HTTRANSPARENT;
+        case WM_MOUSEACTIVATE:
+            return MA_NOACTIVATE;
         case WM_ERASEBKGND:
             return 1;
         case WM_CLOSE:
@@ -44,7 +46,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
     }
 }
 
-HWND CreateOverlay(const RECT& bounds)
+HWND CreateOverlay(const RECT& bounds, HWND owner)
 {
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -58,7 +60,7 @@ HWND CreateOverlay(const RECT& bounds)
     const int height = bounds.bottom - bounds.top;
 
     return CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+        WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
         kOverlayClass,
         L"Better Xcloud DLSS5",
         WS_POPUP,
@@ -66,7 +68,7 @@ HWND CreateOverlay(const RECT& bounds)
         bounds.top,
         width,
         height,
-        nullptr,
+        owner,
         nullptr,
         GetModuleHandleW(nullptr),
         nullptr);
@@ -79,7 +81,7 @@ void PlaceOverlay(HWND overlay, HWND target)
 
     SetWindowPos(
         overlay,
-        HWND_TOPMOST,
+        HWND_TOP,
         bounds.left,
         bounds.top,
         bounds.right - bounds.left,
@@ -91,9 +93,12 @@ void SetOverlayInteractive(HWND overlay, bool interactive)
 {
     if (!overlay) return;
 
+    // Never remove WS_EX_NOACTIVATE. Setup mode should intercept mouse clicks
+    // without taking system focus away from Chrome/xCloud (and its Gamepad API).
     LONG_PTR exStyle = GetWindowLongPtrW(overlay, GWL_EXSTYLE);
     if (interactive) {
-        exStyle &= ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
+        exStyle &= ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT);
+        exStyle |= static_cast<LONG_PTR>(WS_EX_NOACTIVATE);
     } else {
         exStyle |= static_cast<LONG_PTR>(WS_EX_TRANSPARENT | WS_EX_NOACTIVATE);
     }
@@ -102,10 +107,17 @@ void SetOverlayInteractive(HWND overlay, bool interactive)
 
     SetWindowPos(
         overlay,
-        HWND_TOPMOST,
+        HWND_TOP,
         0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER |
-            SWP_FRAMECHANGED | (interactive ? 0 : SWP_NOACTIVATE));
+            SWP_FRAMECHANGED | SWP_NOACTIVATE);
+}
+
+void PulseOverlayKey(HWND overlay, UINT vk)
+{
+    if (!overlay) return;
+    PostMessageW(overlay, WM_KEYDOWN, vk, 1);
+    PostMessageW(overlay, WM_KEYUP, vk, 1 | (1u << 30) | (1u << 31));
 }
 
 bool ForegroundMatches(HWND hwnd)
@@ -197,6 +209,91 @@ int ConnectedXInputControllers()
         }
     }
     return count;
+}
+
+std::wstring WindowClassName(HWND hwnd)
+{
+    wchar_t buffer[256]{};
+    const int count = GetClassNameW(hwnd, buffer, static_cast<int>(std::size(buffer)));
+    return count > 0 ? std::wstring(buffer, static_cast<size_t>(count)) : std::wstring();
+}
+
+struct BrowserContentSearch {
+    HWND best{};
+    long long bestArea{-1};
+};
+
+BOOL CALLBACK BrowserContentEnumProc(HWND hwnd, LPARAM param)
+{
+    auto& state = *reinterpret_cast<BrowserContentSearch*>(param);
+    const std::wstring cls = WindowClassName(hwnd);
+    if (cls.find(L"Chrome_RenderWidgetHostHWND") == std::wstring::npos &&
+        cls.find(L"RenderWidgetHost") == std::wstring::npos) {
+        return TRUE;
+    }
+
+    RECT rc{};
+    if (!GetWindowRect(hwnd, &rc)) return TRUE;
+    const long long area =
+        static_cast<long long>(std::max(0L, rc.right - rc.left)) *
+        static_cast<long long>(std::max(0L, rc.bottom - rc.top));
+    if (area > state.bestArea) {
+        state.bestArea = area;
+        state.best = hwnd;
+    }
+    return TRUE;
+}
+
+HWND FindBrowserContentWindow(HWND browserRoot)
+{
+    BrowserContentSearch state;
+    EnumChildWindows(browserRoot, BrowserContentEnumProc,
+                     reinterpret_cast<LPARAM>(&state));
+    return state.best;
+}
+
+bool FocusBrowserContent(HWND browserRoot)
+{
+    if (!browserRoot || !IsWindow(browserRoot)) return false;
+
+    browserRoot = GetAncestor(browserRoot, GA_ROOT);
+    HWND content = FindBrowserContentWindow(browserRoot);
+
+    const bool foregroundOk = ActivateWindow(browserRoot);
+
+    DWORD processId = 0;
+    const DWORD browserThread = GetWindowThreadProcessId(
+        content ? content : browserRoot, &processId);
+    const DWORD currentThread = GetCurrentThreadId();
+    bool attached = false;
+    if (browserThread && browserThread != currentThread) {
+        attached = AttachThreadInput(currentThread, browserThread, TRUE) != FALSE;
+    }
+
+    if (content && IsWindow(content)) {
+        SetFocus(content);
+        PostMessageW(content, WM_SETFOCUS, 0, 0);
+    } else {
+        SetFocus(browserRoot);
+    }
+
+    if (attached) {
+        AttachThreadInput(currentThread, browserThread, FALSE);
+    }
+
+    return foregroundOk && ForegroundMatches(browserRoot);
+}
+
+std::wstring BrowserFocusedClass(HWND browserRoot)
+{
+    DWORD pid = 0;
+    const DWORD thread = GetWindowThreadProcessId(browserRoot, &pid);
+    if (!thread) return {};
+
+    GUITHREADINFO gui{};
+    gui.cbSize = sizeof(gui);
+    if (!GetGUIThreadInfo(thread, &gui)) return {};
+    return WindowClassName(gui.hwndFocus);
 }
 
 bool TargetHasFocus(HWND target)
@@ -397,7 +494,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             << " localNgxPlain=" << (localNgxPlain ? 1 : 0) << "\n";
     liveLog.flush();
 
-    HWND overlay = CreateOverlay(browser.visualBounds);
+    HWND overlay = CreateOverlay(browser.visualBounds, browser.hwnd);
     if (!overlay) {
         ErrorBox(L"Unable to create the processed-video overlay.");
         return 14;
@@ -459,11 +556,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     const int xinputControllers = ConnectedXInputControllers();
     liveLog << "xinputControllersVisibleToHost=" << xinputControllers << "\n";
 
-    const bool initialBrowserFocus = ActivateWindow(browser.hwnd);
+    const bool initialBrowserFocus = FocusBrowserContent(browser.hwnd);
     liveLog << "browserFocusAfterInit=" << (initialBrowserFocus ? 1 : 0)
             << " foregroundHwnd=0x" << std::hex
             << reinterpret_cast<std::uintptr_t>(GetForegroundWindow())
-            << std::dec << "\n";
+            << std::dec
+            << " browserFocusClass=";
+    for (wchar_t ch : BrowserFocusedClass(browser.hwnd)) {
+        liveLog << (ch <= 0x7f ? char(ch) : '?');
+    }
+    liveLog << "\n";
     liveLog.flush();
 
     TemporalGuideGenerator guides;
@@ -472,8 +574,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     bool forceReset = true;
     bool setupMode = false;
     bool insertWasDown = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
-    bool leaveSetupOnInsertRelease = false;
-    auto returnToGameAt = std::chrono::steady_clock::time_point::max();
+    bool escapeWasDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
     std::uint64_t lastSequence = 0;
 
     const auto ptsOrigin = std::chrono::steady_clock::now();
@@ -505,49 +606,42 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
         const auto now = std::chrono::steady_clock::now();
 
-        // OptiScaler's menu input is tied to the render target HWND being
-        // foreground. Our normal overlay is intentionally click-through and
-        // non-activating, so use Insert as a two-way setup handshake:
-        // first press focuses/makes the overlay interactive; OptiScaler sees
-        // that same key release and opens its menu. The second press closes
-        // OptiScaler, then we return focus/input to the xCloud browser.
+        // Setup mode never steals foreground from Chrome. It only removes
+        // WS_EX_TRANSPARENT, so mouse clicks go to the ReShade/OptiScaler UI
+        // while WS_EX_NOACTIVATE keeps the xCloud document foreground.
         const bool insertDown = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
+        const bool escapeDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+
         if (insertDown && !insertWasDown) {
-            if (!setupMode) {
-                setupMode = true;
-                returnToGameAt = std::chrono::steady_clock::time_point::max();
-                SetOverlayInteractive(overlay, true);
-                PlaceOverlay(overlay, browser.hwnd);
-                ShowWindow(overlay, SW_SHOW);
-                const bool focused = ActivateWindow(overlay);
-                liveLog << "setupMode=entered trigger=Insert focus="
-                        << (focused ? 1 : 0) << "\n";
-                liveLog.flush();
-            } else {
-                // Keep the host focused until OptiScaler observes the matching
-                // key release and closes its own menu.
-                leaveSetupOnInsertRelease = true;
-            }
-        }
+            setupMode = !setupMode;
+            SetOverlayInteractive(overlay, setupMode);
+            PlaceOverlay(overlay, browser.hwnd);
+            ShowWindow(overlay, SW_SHOWNOACTIVATE);
 
-        if (!insertDown && insertWasDown && setupMode &&
-            leaveSetupOnInsertRelease) {
-            leaveSetupOnInsertRelease = false;
-            returnToGameAt = now + std::chrono::milliseconds(250);
-        }
+            // ReShade is configured to use Insert as its overlay key. Because
+            // the browser remains foreground, synthesize the same key into the
+            // host HWND so the overlay opens/closes deterministically.
+            PulseOverlayKey(overlay, VK_INSERT);
 
-        if (setupMode &&
-            returnToGameAt != std::chrono::steady_clock::time_point::max() &&
-            now >= returnToGameAt) {
-            setupMode = false;
-            returnToGameAt = std::chrono::steady_clock::time_point::max();
-            SetOverlayInteractive(overlay, false);
-            const bool focused = ActivateWindow(browser.hwnd);
-            liveLog << "setupMode=exited trigger=Insert browserFocus="
-                    << (focused ? 1 : 0) << "\n";
+            const bool browserFocused = FocusBrowserContent(browser.hwnd);
+            liveLog << "setupMode=" << (setupMode ? "entered" : "exited")
+                    << " trigger=Insert browserFocus="
+                    << (browserFocused ? 1 : 0) << "\n";
             liveLog.flush();
         }
+
+        // Escape is an unconditional recovery path if an overlay/add-on menu
+        // gets into a bad state: restore click-through immediately.
+        if (setupMode && escapeDown && !escapeWasDown) {
+            setupMode = false;
+            SetOverlayInteractive(overlay, false);
+            FocusBrowserContent(browser.hwnd);
+            liveLog << "setupMode=exited trigger=Escape browserFocus=1\n";
+            liveLog.flush();
+        }
+
         insertWasDown = insertDown;
+        escapeWasDown = escapeDown;
 
         if (now >= nextPositionSync) {
             PlaceOverlay(overlay, browser.hwnd);
@@ -556,9 +650,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             const bool shouldShow =
                 overlayEnabled && (setupMode || TargetHasFocus(browser.hwnd));
             if (shouldShow) {
-                ShowWindow(
-                    overlay,
-                    setupMode ? SW_SHOW : SW_SHOWNOACTIVATE);
+                ShowWindow(overlay, SW_SHOWNOACTIVATE);
             } else {
                 ShowWindow(overlay, SW_HIDE);
             }
@@ -608,13 +700,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             }
 
             PlaceOverlay(overlay, browser.hwnd);
-            if (setupMode) {
-                SetOverlayInteractive(overlay, true);
-                ActivateWindow(overlay);
-            } else {
-                SetOverlayInteractive(overlay, false);
-                ActivateWindow(browser.hwnd);
-            }
+            SetOverlayInteractive(overlay, setupMode);
+            FocusBrowserContent(browser.hwnd);
             frame = std::move(latest);
             previousFrameTime = std::chrono::steady_clock::now();
             forceReset = true;
