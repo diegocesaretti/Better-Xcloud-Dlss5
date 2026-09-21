@@ -231,6 +231,37 @@ std::wstring TargetKindName(CaptureTargetPreference kind)
     return L"Unknown";
 }
 
+bool SaveRendererSettings(
+    const std::filesystem::path& reshadeIni,
+    bool neuralUplift,
+    bool nrUpscaling)
+{
+    const bool a = WritePrivateProfileStringW(
+        L"RenoDX.DLSS5",
+        L"NeuralUplift",
+        neuralUplift ? L"1" : L"0",
+        reshadeIni.c_str()) != FALSE;
+    const bool b = WritePrivateProfileStringW(
+        L"RenoDX.DLSS5",
+        L"NREnableUpscaling",
+        nrUpscaling ? L"1" : L"0",
+        reshadeIni.c_str()) != FALSE;
+    return a && b;
+}
+
+void LoadRendererSettings(
+    ControlPanel& panel,
+    const std::filesystem::path& reshadeIni)
+{
+    const bool neuralUplift =
+        GetPrivateProfileIntW(
+            L"RenoDX.DLSS5", L"NeuralUplift", 1, reshadeIni.c_str()) != 0;
+    const bool nrUpscaling =
+        GetPrivateProfileIntW(
+            L"RenoDX.DLSS5", L"NREnableUpscaling", 0, reshadeIni.c_str()) != 0;
+    panel.SetRendererSettings(neuralUplift, nrUpscaling);
+}
+
 bool WaitForFirstFrame(WindowCapture& capture, CapturedFrame& frame)
 {
     using namespace std::chrono_literals;
@@ -296,6 +327,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     const auto moduleDirForUi = ModuleDirectory();
     const auto reshadeIniPath = moduleDirForUi / L"ReShade.ini";
     const auto optiIniPath = moduleDirForUi / L"OptiScaler.ini";
+    LoadRendererSettings(*panel, reshadeIniPath);
 
     while (panel->Alive() && !browser.hwnd) {
         PumpMessages();
@@ -331,6 +363,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             case ControlPanelCommand::CopyDiagnostics:
                 CopyTextToClipboard(panel->Hwnd(), diagnosticsText);
                 panel->SetStatus(L"Diagnostics copied to clipboard.");
+                break;
+            case ControlPanelCommand::SaveSettings:
+                if (SaveRendererSettings(
+                        reshadeIniPath,
+                        panel->NeuralUpliftEnabled(),
+                        panel->NrUpscalingEnabled())) {
+                    panel->SetStatus(
+                        L"Renderer settings saved. They will apply the next time the mirror starts.");
+                } else {
+                    panel->SetStatus(L"Could not write ReShade.ini.");
+                }
                 break;
             case ControlPanelCommand::Close:
             case ControlPanelCommand::Stop:
@@ -509,6 +552,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             case ControlPanelCommand::CopyDiagnostics:
                 if (CopyTextToClipboard(panel->Hwnd(), diagnosticsText)) {
                     panel->SetStatus(L"Diagnostics copied to clipboard. Mirror is still running.");
+                }
+                break;
+            case ControlPanelCommand::SaveSettings:
+                if (SaveRendererSettings(
+                        ModuleDirectory() / L"ReShade.ini",
+                        panel->NeuralUpliftEnabled(),
+                        panel->NrUpscalingEnabled())) {
+                    panel->SetStatus(
+                        L"Renderer settings saved. Stop and relaunch the mirror to apply them.");
+                } else {
+                    panel->SetStatus(L"Could not write ReShade.ini.");
                 }
                 break;
             default:
