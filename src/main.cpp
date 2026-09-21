@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <string>
 #include <thread>
 
@@ -618,10 +619,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             PlaceOverlay(overlay, browser.hwnd);
             ShowWindow(overlay, SW_SHOWNOACTIVATE);
 
-            // ReShade is configured to use Insert as its overlay key. Because
-            // the browser remains foreground, synthesize the same key into the
-            // host HWND so the overlay opens/closes deterministically.
-            PulseOverlayKey(overlay, VK_INSERT);
+            // Keep the user's physical Insert entirely in the browser path.
+            // Toggle ReShade with a synthetic Home event directed only at the
+            // host HWND, avoiding double-toggles from global key polling.
+            PulseOverlayKey(overlay, VK_HOME);
 
             const bool browserFocused = FocusBrowserContent(browser.hwnd);
             liveLog << "setupMode=" << (setupMode ? "entered" : "exited")
