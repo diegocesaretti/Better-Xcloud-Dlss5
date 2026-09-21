@@ -254,16 +254,16 @@ Streamline/version.dll compatibility route: $streamlineCompat
     $launcherInstalled = Join-Path $InstallRoot 'Start-XCloud-DLSS5.ps1'
     $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$launcherInstalled`""
     $shortcut.WorkingDirectory = $InstallRoot
-    $shortcut.Description = 'Attach DLSS5 full-window mirror to an existing Xbox Cloud Gaming browser window'
+    $shortcut.Description = 'Open the Better Xcloud DLSS5 Xbox App / browser control and debug panel'
     $shortcut.Save()
 
     Write-Step 'Installation complete'
     Write-Host "Installed to: $InstallRoot" -ForegroundColor Green
     Write-Host ''
-    Write-Host 'Open Xbox Cloud Gaming normally first, verify the controller works, then use Start > Better Xcloud DLSS5.'
-    Write-Host 'Attach-only mirror mode never changes browser focus or captures mouse/gamepad input.'
-    Write-Host 'F7 = show/hide processed mirror'
-    Write-Host 'F9 = stop the DLSS host'
+    Write-Host 'Use Start > Better Xcloud DLSS5 to open the Control & Debug panel.'
+    Write-Host 'Choose Xbox App (recommended), Browser, or Auto, then click Start mirror.'
+    Write-Host 'The mirror never injects controller, keyboard or mouse input into the target.'
+    Write-Host 'Use the panel to show/hide the mirror, stop it, edit settings, open logs, or copy diagnostics.'
     Write-Host ''
     Write-Host 'Better xCloud is recommended and should be installed from its official project.'
 
@@ -273,7 +273,7 @@ Streamline/version.dll compatibility route: $streamlineCompat
             Start-Process 'https://better-xcloud.github.io/'
         }
 
-        $launch = Read-Host 'Start the DLSS5 mirror now? Open Xbox Cloud Gaming in your browser first. [Y/n]'
+        $launch = Read-Host 'Open the Better Xcloud DLSS5 Control & Debug panel now? [Y/n]'
         if ([string]::IsNullOrWhiteSpace($launch) -or $launch -match '^[YySs]') {
             Start-Process powershell.exe -ArgumentList @(
                 '-NoProfile',
