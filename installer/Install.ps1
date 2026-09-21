@@ -151,9 +151,14 @@ try {
         (Test-Path -LiteralPath (Join-Path $installedNeural 'sl.dlss_nr.dll')) -and
         (Test-Path -LiteralPath (Join-Path $installedNeural 'nvngx_dlss.dll')) -and
         (Test-Path -LiteralPath (Join-Path $installedNeural 'nvngx_dlssnr.dll'))
-    $renoHookMode = if ($streamlineCompat) { '1' } else { '2' }
 
-    Write-Step $(if ($streamlineCompat) { 'Configuring RenoDX Streamline neural hook' } else { 'Configuring RenoDX raw-NGX neural hook' })
+    # XCloudDLSS5Host is a raw-NGX carrier. version.dll is used only as the
+    # GTX/Turing compatibility shim; the host itself never calls Streamline.
+    # Therefore RenoDX must hook NGX directly even when the compatibility pack
+    # also contains Streamline plugins for ordinary games.
+    $renoHookMode = '2'
+
+    Write-Step 'Configuring RenoDX raw-NGX neural hook'
     $reshadeIni = Join-Path $installedNeural 'ReShade.ini'
     Add-Type -TypeDefinition @'
 using System;
@@ -190,6 +195,25 @@ public static class BetterXcloudIni {
         }
     }
     Write-Host "RenoDX neural hook enabled for the bridge (EnableHooks=$renoHookMode)." -ForegroundColor Green
+
+    if (Test-Path -LiteralPath (Join-Path $installedNeural 'version.dll')) {
+        Write-Step 'Configuring GTX compatibility shim for headless bridge use'
+        @"
+[Debug]
+DisableUI=true
+EarlyInit=false
+
+[UI]
+Monitoring=false
+SideBar=false
+
+[Performance]
+ForceLoadDLSSG=false
+DynamicMFG=false
+MFGHotkeys=false
+"@ | Set-Content -LiteralPath (Join-Path $installedNeural 'dlss-enabler.ini') -Encoding ASCII
+        Write-Host 'DLSS Enabler UI disabled; compatibility shim will run headless.' -ForegroundColor Green
+    }
 
     New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
     Copy-Item -LiteralPath $launcherSource -Destination (Join-Path $InstallRoot 'Start-XCloud-DLSS5.ps1') -Force
