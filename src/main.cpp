@@ -6,6 +6,7 @@
 #include "TemporalGuides.h"
 
 #include <windows.h>
+#include <winver.h>
 #include <dwmapi.h>
 
 #include <algorithm>
@@ -101,6 +102,43 @@ std::filesystem::path ModuleDirectory()
     return std::filesystem::path(path).parent_path();
 }
 
+std::wstring ModulePath(HMODULE module)
+{
+    if (!module) return {};
+    std::wstring path(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(
+        module, path.data(), static_cast<DWORD>(path.size()));
+    if (!length || length >= path.size()) return {};
+    path.resize(length);
+    return path;
+}
+
+bool PathEqualsInsensitive(const std::filesystem::path& left,
+                           const std::filesystem::path& right)
+{
+    const std::wstring a = left.lexically_normal().wstring();
+    const std::wstring b = right.lexically_normal().wstring();
+    return CompareStringOrdinal(
+               a.c_str(), static_cast<int>(a.size()),
+               b.c_str(), static_cast<int>(b.size()),
+               TRUE) == CSTR_EQUAL;
+}
+
+void PrimeVersionProxyImport()
+{
+    // version.lib is linked deliberately. When a compatibility pack places a
+    // proxy named version.dll beside the host, the Windows loader resolves that
+    // import before wWinMain, matching the injection method used by the known-
+    // good GTX/Turing pack. This harmless query keeps the import live.
+    std::wstring exePath(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(
+        nullptr, exePath.data(), static_cast<DWORD>(exePath.size()));
+    if (!length || length >= exePath.size()) return;
+    exePath.resize(length);
+    DWORD ignored = 0;
+    (void)GetFileVersionInfoSizeW(exePath.c_str(), &ignored);
+}
+
 void ErrorBox(const std::wstring& text)
 {
     MessageBoxW(
@@ -156,6 +194,27 @@ bool WaitForFirstFrame(WindowCapture& capture, CapturedFrame& frame)
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
+    PrimeVersionProxyImport();
+
+    const std::filesystem::path moduleDir = ModuleDirectory();
+    const bool versionProxyPresent = std::filesystem::exists(moduleDir / L"version.dll");
+    const bool streamlineInterposerPresent =
+        std::filesystem::exists(moduleDir / L"sl.interposer.dll");
+    const bool streamlineNrPresent =
+        std::filesystem::exists(moduleDir / L"sl.dlss_nr.dll");
+    const bool streamlineCompatPresent =
+        versionProxyPresent && streamlineInterposerPresent && streamlineNrPresent &&
+        std::filesystem::exists(moduleDir / L"nvngx_dlss.dll") &&
+        std::filesystem::exists(moduleDir / L"nvngx_dlssnr.dll");
+
+    const std::wstring loadedVersionPath =
+        ModulePath(GetModuleHandleW(L"version.dll"));
+    const bool localVersionProxyLoaded =
+        !loadedVersionPath.empty() &&
+        PathEqualsInsensitive(
+            std::filesystem::path(loadedVersionPath),
+            moduleDir / L"version.dll");
+
     // WGC reports physical pixels. Match that coordinate system when placing
     // the overlay on mixed-DPI desktops.
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -187,6 +246,15 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     for (wchar_t ch : browser.processName) liveLog << (ch <= 0x7f ? char(ch) : '?');
     liveLog << " title=";
     for (wchar_t ch : browser.title) liveLog << (ch <= 0x7f ? char(ch) : '?');
+    liveLog << "\n";
+    liveLog << "compatVersionProxyPresent=" << (versionProxyPresent ? 1 : 0)
+            << " compatVersionProxyLoaded=" << (localVersionProxyLoaded ? 1 : 0)
+            << " streamlineInterposer=" << (streamlineInterposerPresent ? 1 : 0)
+            << " streamlineNr=" << (streamlineNrPresent ? 1 : 0)
+            << " streamlineCompat=" << (streamlineCompatPresent ? 1 : 0)
+            << "\n";
+    liveLog << "versionModule=";
+    for (wchar_t ch : loadedVersionPath) liveLog << (ch <= 0x7f ? char(ch) : '?');
     liveLog << "\n";
     liveLog.flush();
 
@@ -241,12 +309,21 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
         std::wstring carrierError =
             L"The DLSS carrier could not initialize.";
-        if (!localNgxUnderscore && !localNgxPlain) {
+        if (streamlineCompatPresent && !localVersionProxyLoaded) {
             carrierError +=
-                L"\n\nNo local _nvngx.dll / nvngx.dll override was found. "
-                L"On the experimental GTX 16-series path, reinstall by dragging "
-                L"the known-good compatibility ZIP onto Install.cmd so the local "
-                L"NGX core from that pack is staged before DriverStore is used.";
+                L"\n\nThe GTX Streamline compatibility files are present, but "
+                L"version.dll was not loaded as the process-local startup proxy. "
+                L"Check XCloudDLSS5-live.log for the loaded version.dll path.";
+        } else if (streamlineCompatPresent && localVersionProxyLoaded) {
+            carrierError +=
+                L"\n\nThe GTX Streamline/version.dll compatibility route is "
+                L"loaded. The remaining failure is inside the carrier/NGX path; "
+                L"inspect DLSSVideoPlayer.log and ReShade.log for the next gate.";
+        } else if (!localNgxUnderscore && !localNgxPlain) {
+            carrierError +=
+                L"\n\nNo complete GTX compatibility route was staged. "
+                L"Install with the known-good pack that contains version.dll, "
+                L"Streamline plugins, nvngx_dlss.dll and nvngx_dlssnr.dll.";
         } else {
             carrierError +=
                 L"\n\nA local NGX core override is present, so inspect the NGX "
