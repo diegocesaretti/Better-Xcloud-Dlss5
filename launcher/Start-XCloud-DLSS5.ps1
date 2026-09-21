@@ -14,13 +14,13 @@ if (-not (Test-Path -LiteralPath $hostExe)) {
     exit 2
 }
 
-# Attach-only mirror mode:
-# - The launcher does NOT start Chrome/Edge/Brave.
-# - It does NOT add browser command-line switches.
-# - It does NOT change browser focus.
-# Open Xbox Cloud Gaming normally first (with Better xCloud if desired), verify
-# the controller works, then start this shortcut. The host waits up to 2 minutes
-# for an existing xCloud browser window and captures that entire HWND.
+# Full-window mirror control-panel mode:
+# - The launcher does NOT start or modify Xbox App / Chrome / Edge / Brave.
+# - The host opens its own Control & Debug window.
+# - Pick Xbox App (recommended), Browser, or Auto and press Start mirror.
+# - The selected target keeps ownership of controller/keyboard/mouse input.
+# The host captures the selected top-level window and presents only a passive
+# processed mirror above it.
 
 $env:BETTER_XCLOUD_DLSS5_ALLOW_UNSUPPORTED_SR = '1'
 
