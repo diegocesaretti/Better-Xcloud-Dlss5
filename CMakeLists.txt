@@ -69,7 +69,7 @@ target_link_directories(XCloudDLSS5Host PRIVATE "${DLSS_LIB_DIR}")
 
 target_link_libraries(XCloudDLSS5Host PRIVATE
     d3d11 d3d12 dxgi dxguid d3dcompiler
-    user32 gdi32 dwmapi shell32 shlwapi ole32
+    user32 gdi32 dwmapi shell32 shlwapi ole32 version
     winmm winhttp windowsapp
     ${DLSS_NGX_LIBRARY}
 )
