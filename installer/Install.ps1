@@ -196,11 +196,11 @@ public static class BetterXcloudIni {
     }
     Write-Host "RenoDX neural hook enabled for the bridge (EnableHooks=$renoHookMode)." -ForegroundColor Green
 
-    # ReShade's own overlay is what renders the RenoDX-DLSSNR tab. Keep its
-    # private toggle on Home; the native host maps the user's Insert key to a
-    # synthetic Home event directed only at the overlay, so Chrome never loses
-    # the physical keyboard/gamepad input path.
-    [void][BetterXcloudIni]::WritePrivateProfileString('INPUT', 'KeyOverlay', '36,0,0,0', $reshadeIni)
+    # Attach-only mirror mode intentionally disables interactive overlays.
+    # Chrome/xCloud owns all keyboard, mouse and gamepad input; configuration is
+    # applied from INI files instead of opening ReShade/OptiScaler on top of the
+    # game session.
+    [void][BetterXcloudIni]::WritePrivateProfileString('INPUT', 'KeyOverlay', '0,0,0,0', $reshadeIni)
     [void][BetterXcloudIni]::WritePrivateProfileString('GENERAL', 'TutorialProgress', '4', $reshadeIni)
 
     if (Test-Path -LiteralPath (Join-Path $installedNeural 'version.dll')) {
@@ -222,16 +222,12 @@ MFGHotkeys=false
 "@ | Set-Content -LiteralPath (Join-Path $installedNeural 'dlss-enabler.ini') -Encoding ASCII
         Write-Host 'DLSS Enabler UI disabled; compatibility shim will run headless.' -ForegroundColor Green
 
-        # Keep OptiScaler's own internal shortcut away from the bridge setup
-        # keys. Insert/F8 belong to XCloudDLSS5Host and reliably open/close the
-        # ReShade/RenoDX setup surface; F10 remains available for OptiScaler.
         $optiIni = Join-Path $installedNeural 'OptiScaler.ini'
         if (-not (Test-Path -LiteralPath $optiIni)) {
             New-Item -ItemType File -Path $optiIni -Force | Out-Null
         }
-        [void][BetterXcloudIni]::WritePrivateProfileString('Menu', 'OverlayMenu', 'true', $optiIni)
-        [void][BetterXcloudIni]::WritePrivateProfileString('Menu', 'ShortcutKey', '0x79', $optiIni)
-        Write-Host 'OptiScaler native menu configured on F10; bridge setup uses Insert/F8.' -ForegroundColor Green
+        [void][BetterXcloudIni]::WritePrivateProfileString('Menu', 'OverlayMenu', 'false', $optiIni)
+        Write-Host 'Interactive OptiScaler overlay disabled in attach-only mirror mode.' -ForegroundColor Green
     }
 
     New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
@@ -258,16 +254,15 @@ Streamline/version.dll compatibility route: $streamlineCompat
     $launcherInstalled = Join-Path $InstallRoot 'Start-XCloud-DLSS5.ps1'
     $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$launcherInstalled`""
     $shortcut.WorkingDirectory = $InstallRoot
-    $shortcut.Description = 'Launch Xbox Cloud Gaming with the DLSS5 neural overlay'
+    $shortcut.Description = 'Attach DLSS5 full-window mirror to an existing Xbox Cloud Gaming browser window'
     $shortcut.Save()
 
     Write-Step 'Installation complete'
     Write-Host "Installed to: $InstallRoot" -ForegroundColor Green
     Write-Host ''
-    Write-Host 'Use Start > Better Xcloud DLSS5.'
-    Write-Host 'Insert or F8 = open/close ReShade/RenoDX setup (mouse enabled while open)'
-    Write-Host 'F10 = OptiScaler native menu'
-    Write-Host 'F7 = show/hide processed overlay'
+    Write-Host 'Open Xbox Cloud Gaming normally first, verify the controller works, then use Start > Better Xcloud DLSS5.'
+    Write-Host 'Attach-only mirror mode never changes browser focus or captures mouse/gamepad input.'
+    Write-Host 'F7 = show/hide processed mirror'
     Write-Host 'F9 = stop the DLSS host'
     Write-Host ''
     Write-Host 'Better xCloud is recommended and should be installed from its official project.'
@@ -278,7 +273,7 @@ Streamline/version.dll compatibility route: $streamlineCompat
             Start-Process 'https://better-xcloud.github.io/'
         }
 
-        $launch = Read-Host 'Launch Xbox Cloud Gaming with DLSS5 now? [Y/n]'
+        $launch = Read-Host 'Start the DLSS5 mirror now? Open Xbox Cloud Gaming in your browser first. [Y/n]'
         if ([string]::IsNullOrWhiteSpace($launch) -or $launch -match '^[YySs]') {
             Start-Process powershell.exe -ArgumentList @(
                 '-NoProfile',
