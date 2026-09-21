@@ -196,10 +196,11 @@ public static class BetterXcloudIni {
     }
     Write-Host "RenoDX neural hook enabled for the bridge (EnableHooks=$renoHookMode)." -ForegroundColor Green
 
-    # ReShade's own overlay is what renders the RenoDX-DLSSNR tab. Use Insert
-    # consistently and skip the first-run tutorial so setup mode can toggle it
-    # deterministically without stealing foreground from xCloud.
-    [void][BetterXcloudIni]::WritePrivateProfileString('INPUT', 'KeyOverlay', '45,0,0,0', $reshadeIni)
+    # ReShade's own overlay is what renders the RenoDX-DLSSNR tab. Keep its
+    # private toggle on Home; the native host maps the user's Insert key to a
+    # synthetic Home event directed only at the overlay, so Chrome never loses
+    # the physical keyboard/gamepad input path.
+    [void][BetterXcloudIni]::WritePrivateProfileString('INPUT', 'KeyOverlay', '36,0,0,0', $reshadeIni)
     [void][BetterXcloudIni]::WritePrivateProfileString('GENERAL', 'TutorialProgress', '4', $reshadeIni)
 
     if (Test-Path -LiteralPath (Join-Path $installedNeural 'version.dll')) {
