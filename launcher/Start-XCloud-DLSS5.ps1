@@ -68,16 +68,11 @@ if (-not $browser) {
 
 $existingXCloud = Find-ExistingXCloudBrowser
 if (-not $existingXCloud) {
-    # Do not use Chrome's --app mode. A normal browser window keeps the web
-    # contents focus model identical to ordinary xCloud/Better xCloud use.
-    # The native overlay covers the browser, so also disable Chromium's native
-    # occlusion/background throttling for this dedicated xCloud window.
+    # Launch xCloud like a normal user-created browser window. Do not add
+    # experimental Chromium switches here: gamepad detection should follow the
+    # exact same browser path the user gets when opening xbox.com manually.
     Start-Process -FilePath $browser -ArgumentList @(
         '--new-window',
-        '--start-maximized',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding',
-        '--disable-features=CalculateNativeWinOcclusion',
         'https://www.xbox.com/play'
     )
     Start-Sleep -Seconds 3
