@@ -16,6 +16,7 @@ enum class ControlPanelCommand {
     OpenReShadeConfig,
     OpenOptiScalerConfig,
     CopyDiagnostics,
+    SaveSettings,
     Close
 };
 
@@ -33,6 +34,9 @@ public:
     void SetStats(const std::wstring& text);
     void SetRunning(bool running);
     void SetMirrorVisible(bool visible);
+    bool NeuralUpliftEnabled() const;
+    bool NrUpscalingEnabled() const;
+    void SetRendererSettings(bool neuralUplift, bool nrUpscaling);
 
 private:
     explicit ControlPanel(HINSTANCE instance) : instance_(instance) {}
@@ -52,6 +56,8 @@ private:
     HWND startButton_{};
     HWND stopButton_{};
     HWND toggleButton_{};
+    HWND neuralUpliftCheck_{};
+    HWND nrUpscalingCheck_{};
     HFONT font_{};
     bool alive_{true};
     bool running_{false};
