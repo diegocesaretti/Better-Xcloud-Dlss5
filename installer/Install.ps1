@@ -196,12 +196,19 @@ public static class BetterXcloudIni {
     }
     Write-Host "RenoDX neural hook enabled for the bridge (EnableHooks=$renoHookMode)." -ForegroundColor Green
 
+    # ReShade's own overlay is what renders the RenoDX-DLSSNR tab. Use Insert
+    # consistently and skip the first-run tutorial so setup mode can toggle it
+    # deterministically without stealing foreground from xCloud.
+    [void][BetterXcloudIni]::WritePrivateProfileString('INPUT', 'KeyOverlay', '45,0,0,0', $reshadeIni)
+    [void][BetterXcloudIni]::WritePrivateProfileString('GENERAL', 'TutorialProgress', '4', $reshadeIni)
+
     if (Test-Path -LiteralPath (Join-Path $installedNeural 'version.dll')) {
         Write-Step 'Configuring GTX compatibility shim for headless bridge use'
         @"
 [Debug]
 DisableUI=true
-EarlyInit=false
+EarlyInit=true
+UseFsrOnly=true
 
 [UI]
 Monitoring=false
@@ -214,10 +221,9 @@ MFGHotkeys=false
 "@ | Set-Content -LiteralPath (Join-Path $installedNeural 'dlss-enabler.ini') -Encoding ASCII
         Write-Host 'DLSS Enabler UI disabled; compatibility shim will run headless.' -ForegroundColor Green
 
-        # OptiScaler defaults to Insert, but write it explicitly so every clean
-        # install has a predictable setup key. The host temporarily focuses the
-        # render overlay on the first Insert so OptiScaler can receive mouse and
-        # keyboard, then returns focus to xCloud after the menu closes.
+        # Keep OptiScaler on the same setup key. The native host leaves Chrome
+        # foreground and temporarily routes mouse clicks to the no-activate
+        # overlay instead of moving system focus away from xCloud.
         $optiIni = Join-Path $installedNeural 'OptiScaler.ini'
         if (-not (Test-Path -LiteralPath $optiIni)) {
             New-Item -ItemType File -Path $optiIni -Force | Out-Null
