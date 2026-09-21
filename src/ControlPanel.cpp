@@ -14,6 +14,9 @@ constexpr int kIdOpenLogs = 1005;
 constexpr int kIdOpenReShade = 1006;
 constexpr int kIdOpenOptiScaler = 1007;
 constexpr int kIdCopyDiagnostics = 1008;
+constexpr int kIdNeuralUplift = 1009;
+constexpr int kIdNrUpscaling = 1010;
+constexpr int kIdSaveSettings = 1011;
 
 HWND MakeControl(
     DWORD exStyle,
@@ -77,7 +80,7 @@ bool ControlPanel::Initialize()
         kControlPanelClass,
         L"Better Xcloud DLSS5 - Control & Debug",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 620, 540,
+        CW_USEDEFAULT, CW_USEDEFAULT, 620, 625,
         nullptr, nullptr, instance_, this);
     if (!hwnd_) return false;
 
@@ -148,6 +151,33 @@ bool ControlPanel::Initialize()
         WS_CHILD | WS_VISIBLE | SS_LEFT,
         290, 423, 300, 52, hwnd_, 0);
 
+    MakeControl(0, L"STATIC", L"Renderer settings (next launch)",
+                WS_CHILD | WS_VISIBLE,
+                20, 480, 220, 24, hwnd_, 0);
+
+    neuralUpliftCheck_ = MakeControl(
+        0, L"BUTTON", L"Neural Uplift",
+        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        20, 508, 145, 28, hwnd_, kIdNeuralUplift);
+
+    nrUpscalingCheck_ = MakeControl(
+        0, L"BUTTON", L"NR Upscaling",
+        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        175, 508, 145, 28, hwnd_, kIdNrUpscaling);
+
+    MakeControl(
+        0, L"BUTTON", L"Save settings",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        330, 505, 120, 32, hwnd_, kIdSaveSettings);
+
+    MakeControl(
+        0, L"STATIC",
+        L"Tested defaults: Neural Uplift ON, NR Upscaling OFF.",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        20, 545, 430, 24, hwnd_, 0);
+
+    SetRendererSettings(true, false);
+
     EnumChildWindows(hwnd_, [](HWND child, LPARAM param) -> BOOL {
         reinterpret_cast<ControlPanel*>(param)->ApplyFont(child);
         return TRUE;
@@ -210,6 +240,32 @@ void ControlPanel::SetMirrorVisible(bool visible)
     }
 }
 
+bool ControlPanel::NeuralUpliftEnabled() const
+{
+    return neuralUpliftCheck_ &&
+           SendMessageW(neuralUpliftCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
+}
+
+bool ControlPanel::NrUpscalingEnabled() const
+{
+    return nrUpscalingCheck_ &&
+           SendMessageW(nrUpscalingCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
+}
+
+void ControlPanel::SetRendererSettings(bool neuralUplift, bool nrUpscaling)
+{
+    if (neuralUpliftCheck_) {
+        SendMessageW(
+            neuralUpliftCheck_, BM_SETCHECK,
+            neuralUplift ? BST_CHECKED : BST_UNCHECKED, 0);
+    }
+    if (nrUpscalingCheck_) {
+        SendMessageW(
+            nrUpscalingCheck_, BM_SETCHECK,
+            nrUpscaling ? BST_CHECKED : BST_UNCHECKED, 0);
+    }
+}
+
 LRESULT CALLBACK ControlPanel::WndProc(
     HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
@@ -240,6 +296,7 @@ LRESULT ControlPanel::HandleMessage(
                     case kIdOpenReShade: Queue(ControlPanelCommand::OpenReShadeConfig); return 0;
                     case kIdOpenOptiScaler: Queue(ControlPanelCommand::OpenOptiScalerConfig); return 0;
                     case kIdCopyDiagnostics: Queue(ControlPanelCommand::CopyDiagnostics); return 0;
+                    case kIdSaveSettings: Queue(ControlPanelCommand::SaveSettings); return 0;
                     default: break;
                 }
             }
