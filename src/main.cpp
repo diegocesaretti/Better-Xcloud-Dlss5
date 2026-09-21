@@ -361,6 +361,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                     overlayEnabled = !overlayEnabled;
                     if (!overlayEnabled) ShowWindow(overlay, SW_HIDE);
                 } else if (msg.wParam == kHotkeyExit) {
+                    liveLog << "exitReason=hotkey-F9\n";
+                    liveLog.flush();
                     running = false;
                 }
             }
@@ -384,15 +386,51 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             continue;
         }
 
-        // Resizing requires recreation of both WGC buffers and the D3D12
-        // renderer. The launcher starts a maximized app window, so for the
-        // alpha we fail visibly instead of silently stretching/misaligning.
+        // xCloud/Chromium can resize the captured surface when a stream starts,
+        // browser chrome changes or fullscreen is entered. Recreate only the
+        // D3D12 carrier and temporal history; keep WGC and the browser session alive.
         if (latest.width != frame.width || latest.height != frame.height) {
-            ErrorBox(
-                L"The xCloud window changed size. Restart Better Xcloud DLSS5 "
-                L"after resizing/fullscreening the browser. Automatic live resize "
-                L"is planned for the next milestone.");
-            break;
+            liveLog << "resize=" << frame.width << "x" << frame.height
+                    << "->" << latest.width << "x" << latest.height << "\n";
+            liveLog.flush();
+
+            ShowWindow(overlay, SW_HIDE);
+            renderer.reset();
+            guides.Reset();
+
+            const auto [resizeGridW, resizeGridH] =
+                TemporalGuideGenerator::AnalysisGrid(
+                    latest.width, latest.height, 60.0);
+
+            renderer = MakeD3D12Renderer();
+            if (!renderer ||
+                !renderer->Initialize(
+                    overlay,
+                    latest.width,
+                    latest.height,
+                    latest.width,
+                    latest.height,
+                    resizeGridW,
+                    resizeGridH,
+                    DefaultNeuralCarrierQuality(),
+                    false) ||
+                !renderer->DLSSAvailable()) {
+                liveLog << "exitReason=renderer-reinit-after-resize-failed\n";
+                liveLog.flush();
+                ErrorBox(
+                    L"The xCloud video surface changed size and the DLSS carrier "
+                    L"could not be recreated." + RuntimeLogHint());
+                break;
+            }
+
+            PlaceOverlay(overlay, browser.hwnd);
+            frame = std::move(latest);
+            previousFrameTime = std::chrono::steady_clock::now();
+            forceReset = true;
+            lastSequence = 0;
+            liveLog << "resizeRenderer=initialized dlssAvailable=1\n";
+            liveLog.flush();
+            continue;
         }
 
         const bool dropped =
@@ -462,6 +500,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
         if (!renderOk) {
             if (renderer->GpuUnusable()) {
+                liveLog << "exitReason=gpu-unusable\n";
+                liveLog.flush();
                 ErrorBox(
                     L"The GPU renderer stopped responding or the D3D12 device was removed." +
                     RuntimeLogHint());
@@ -507,6 +547,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         }
     }
 
+    if (!IsWindow(browser.hwnd)) {
+        liveLog << "exitReason=browser-window-closed\n";
+    }
     liveLog << "session=ended\n";
     liveLog.flush();
 
