@@ -31,13 +31,35 @@ function Resolve-CompatibilityPack([string]$ExplicitPath, [string]$PackageRoot) 
     }
 
     $candidates = @()
-    foreach ($pattern in @('GTX1660*.zip', 'compat*.zip', 'drive-download*.zip')) {
+    foreach ($pattern in @(
+        'GTX1660*.zip',
+        'compat*.zip',
+        'drive-download*.zip',
+        'OptiScaler*.zip',
+        '*DLSSNR*.zip',
+        '*DLSS-NR*.zip'
+    )) {
         $candidates += @(Get-ChildItem -LiteralPath $PackageRoot -File -Filter $pattern -ErrorAction SilentlyContinue)
     }
     $streamlineFolder = Join-Path $PackageRoot 'streamline'
     if (Test-Path -LiteralPath $streamlineFolder -PathType Container) {
         $candidates += @(Get-Item -LiteralPath $streamlineFolder)
     }
+
+    foreach ($folderName in @('Main mod', 'OptiScaler-DLSSNR', 'DLSSNR')) {
+        $candidateFolder = Join-Path $PackageRoot $folderName
+        if (Test-Path -LiteralPath $candidateFolder -PathType Container) {
+            $candidates += @(Get-Item -LiteralPath $candidateFolder)
+        }
+    }
+
+    # Also accept a downloaded Drive root folder when it contains exactly one
+    # OptiScaler.dll somewhere below it.
+    $directRoots = @(Get-ChildItem -LiteralPath $PackageRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object {
+            @(Get-ChildItem -LiteralPath $_.FullName -Recurse -File -Filter 'OptiScaler.dll' -ErrorAction SilentlyContinue).Count -eq 1
+        })
+    $candidates += $directRoots
 
     $candidates = @($candidates | Sort-Object FullName -Unique)
     if ($candidates.Count -eq 1) { return $candidates[0].FullName }
