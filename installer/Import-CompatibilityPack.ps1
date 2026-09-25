@@ -58,13 +58,83 @@ $inventoryPatterns = @(
     '*renodx*',
     '*reshade*',
     'sl.*',
-    '*streamline*'
+    '*streamline*',
+    'OptiScaler.dll',
+    'OptiScaler.ini',
+    'Engine.ini'
 )
 $inventory = @()
 foreach ($pattern in $inventoryPatterns) {
     $inventory += @(Get-ChildItem -LiteralPath $compatRoot -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue)
 }
 $inventory = @($inventory | Sort-Object FullName -Unique)
+
+# New OptiScaler DLSS-NR packages carry Neural Rendering inside OptiScaler
+# itself. This route must be isolated from the older ReShade/RenoDX and
+# DLSS-Enabler paths: two NR injectors can conflict.
+$optiDllMatches = @(Get-ChildItem -LiteralPath $compatRoot -Recurse -File -Filter 'OptiScaler.dll' -ErrorAction SilentlyContinue)
+$optiIniMatches = @(Get-ChildItem -LiteralPath $compatRoot -Recurse -File -Filter 'OptiScaler.ini' -ErrorAction SilentlyContinue)
+$optiNrMatches  = @(Get-ChildItem -LiteralPath $compatRoot -Recurse -File -Filter 'nvngx_dlssnr.dll' -ErrorAction SilentlyContinue)
+$optiSupportFolders = @(Get-ChildItem -LiteralPath $compatRoot -Recurse -Directory -Filter 'OptiScaler' -ErrorAction SilentlyContinue)
+
+$directOptiScalerNr =
+    $optiDllMatches.Count -eq 1 -and
+    $optiIniMatches.Count -ge 1 -and
+    $optiNrMatches.Count -eq 1
+
+if ($directOptiScalerNr) {
+    Write-Host 'Detected OptiScaler built-in Neural Rendering package.' -ForegroundColor Cyan
+
+    foreach ($legacyName in @(
+        'dxgi.dll',
+        'ReShade.ini',
+        'renodx-dlss5.addon64',
+        'version.dll',
+        'dlss-enabler.ini',
+        'sl.common.dll',
+        'sl.dlss.dll',
+        'sl.dlss_g.dll',
+        'sl.dlss_nr.dll',
+        'sl.interposer.dll',
+        'sl.nis.dll',
+        'sl.pcl.dll',
+        'sl.reflex.dll'
+    )) {
+        $legacyPath = Join-Path $InstalledNeural $legacyName
+        if (Test-Path -LiteralPath $legacyPath) {
+            Remove-Item -LiteralPath $legacyPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # XCloudDLSS5Host links winmm, so this local proxy loads before wWinMain
+    # without touching XboxPcApp.exe or the browser.
+    Copy-Item -LiteralPath $optiDllMatches[0].FullName -Destination (Join-Path $InstalledNeural 'winmm.dll') -Force
+
+    $optiDllDir = $optiDllMatches[0].Directory.FullName
+    $chosenIni = $optiIniMatches |
+        Sort-Object @{Expression={ if ($_.Directory.FullName -eq $optiDllDir) { 0 } else { 1 } }}, FullName |
+        Select-Object -First 1
+    Copy-Item -LiteralPath $chosenIni.FullName -Destination (Join-Path $InstalledNeural 'OptiScaler.ini') -Force
+
+    Copy-Item -LiteralPath $optiNrMatches[0].FullName -Destination (Join-Path $InstalledNeural 'nvngx_dlssnr.dll') -Force
+
+    $chosenSupport = $optiSupportFolders |
+        Where-Object { $_.Parent.FullName -eq $optiDllDir } |
+        Select-Object -First 1
+    if (-not $chosenSupport) {
+        $chosenSupport = $optiSupportFolders | Select-Object -First 1
+    }
+    if ($chosenSupport) {
+        $destSupport = Join-Path $InstalledNeural 'OptiScaler'
+        if (Test-Path -LiteralPath $destSupport) {
+            Remove-Item -LiteralPath $destSupport -Recurse -Force
+        }
+        Copy-Item -LiteralPath $chosenSupport.FullName -Destination $destSupport -Recurse -Force
+    }
+
+    'OptiScaler built-in NR direct compatibility backend' |
+        Set-Content -LiteralPath (Join-Path $InstalledNeural 'BACKEND_OPTISCALER_DIRECT_NR.txt') -Encoding ASCII
+}
 
 # GTX/Turing packs seen in the wild use two different entry paths:
 #  1) a local NGX core override (_nvngx.dll / nvngx.dll), or
@@ -101,6 +171,7 @@ $copyNames = @(
 )
 
 $copied = @()
+if (-not $directOptiScalerNr) {
 foreach ($name in $copyNames) {
     $matches = @(Get-ChildItem -LiteralPath $compatRoot -Recurse -File -Filter $name -ErrorAction SilentlyContinue)
     if ($matches.Count -gt 1) {
@@ -121,6 +192,21 @@ foreach ($name in $copyNames) {
         Write-Host "  override: $name" -ForegroundColor Green
     }
 }
+}
+
+if ($directOptiScalerNr) {
+    foreach ($name in @('winmm.dll','OptiScaler.ini','nvngx_dlssnr.dll')) {
+        $destination = Join-Path $InstalledNeural $name
+        if (Test-Path -LiteralPath $destination) {
+            $copied += [pscustomobject]@{
+                Name = $name
+                Source = 'OptiScaler direct NR package'
+                Size = (Get-Item -LiteralPath $destination).Length
+                SHA256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+        }
+    }
+}
 
 $hasLocalCore = @($copied | Where-Object { $_.Name -in @('_nvngx.dll', 'nvngx.dll') }).Count -gt 0
 $hasVersionProxy = Test-Path -LiteralPath (Join-Path $InstalledNeural 'version.dll')
@@ -131,11 +217,14 @@ $hasDlssNr = Test-Path -LiteralPath (Join-Path $InstalledNeural 'nvngx_dlssnr.dl
 $preservedNeuralAfter = if ($hasDlssNr) {
     (Get-FileHash -LiteralPath (Join-Path $InstalledNeural 'nvngx_dlssnr.dll') -Algorithm SHA256).Hash.ToLowerInvariant()
 } else { '' }
-$neuralRuntimePreserved = $preservedNeuralBefore -and ($preservedNeuralBefore -eq $preservedNeuralAfter)
+$neuralRuntimePreserved =
+    if ($directOptiScalerNr) { $false }
+    else { $preservedNeuralBefore -and ($preservedNeuralBefore -eq $preservedNeuralAfter) }
 $hasStreamlineProxy = $hasVersionProxy -and $hasStreamlineInterposer -and $hasStreamlineNr -and $hasDlss -and $hasDlssNr
 
 $mode =
-    if ($hasStreamlineProxy) { 'streamline-version-proxy' }
+    if ($directOptiScalerNr) { 'optiscaler-direct-nr' }
+    elseif ($hasStreamlineProxy) { 'streamline-version-proxy' }
     elseif ($hasLocalCore) { 'local-ngx-core' }
     else { 'partial-or-unknown' }
 
@@ -145,6 +234,7 @@ $report = New-Object Text.StringBuilder
 [void]$report.AppendLine("Pack: $resolvedPack")
 [void]$report.AppendLine("Pack digest SHA256: $packHash")
 [void]$report.AppendLine("Compatibility mode: $mode")
+[void]$report.AppendLine("OptiScaler built-in NR route: $directOptiScalerNr")
 [void]$report.AppendLine("Local NGX core override present: $hasLocalCore")
 [void]$report.AppendLine("version.dll proxy present: $hasVersionProxy")
 [void]$report.AppendLine("Streamline interposer present: $hasStreamlineInterposer")
@@ -174,7 +264,9 @@ if ($inventory.Count -eq 0) {
 }
 $report.ToString() | Set-Content -LiteralPath $ReportPath -Encoding UTF8
 
-if ($hasStreamlineProxy) {
+if ($directOptiScalerNr) {
+    Write-Host 'OptiScaler built-in NR route staged as local winmm.dll proxy.' -ForegroundColor Green
+} elseif ($hasStreamlineProxy) {
     Write-Host 'Streamline/version.dll compatibility route staged.' -ForegroundColor Green
 } elseif ($hasLocalCore) {
     Write-Host 'Local NGX core override staged.' -ForegroundColor Green
@@ -187,6 +279,7 @@ if ($hasStreamlineProxy) {
     Mode = $mode
     LocalCore = $hasLocalCore
     StreamlineProxy = $hasStreamlineProxy
+    OptiScalerDirectNR = $directOptiScalerNr
     NeuralRuntimePreserved = $neuralRuntimePreserved
     CopiedCount = $copied.Count
 } | ConvertTo-Json -Compress
