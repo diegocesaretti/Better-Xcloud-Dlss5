@@ -97,6 +97,34 @@ jobs:
           if (-not (Select-String -LiteralPath $report -SimpleMatch 'Compatibility mode: streamline-version-proxy' -Quiet)) { throw 'Importer report did not record the Streamline proxy route.' }
           if (-not (Select-String -LiteralPath $report -SimpleMatch 'Pinned neural runtime preserved: True' -Quiet)) { throw 'Importer report did not record preservation of the pinned neural runtime.' }
 
+          # New OptiScaler built-in NR route: it must replace the neural runtime,
+          # stage OptiScaler as winmm.dll and remove the legacy injector chain.
+          $directRoot = Join-Path $env:RUNNER_TEMP 'opti-direct-test'
+          $directSource = Join-Path $directRoot 'Main mod'
+          $directSupport = Join-Path $directSource 'OptiScaler'
+          $directDest = Join-Path $directRoot 'dest'
+          $directWork = Join-Path $directRoot 'work'
+          New-Item -ItemType Directory -Path $directSource,$directSupport,$directDest,$directWork -Force | Out-Null
+
+          'legacy reshade' | Set-Content -LiteralPath (Join-Path $directDest 'dxgi.dll') -Encoding ascii
+          'legacy renodx' | Set-Content -LiteralPath (Join-Path $directDest 'renodx-dlss5.addon64') -Encoding ascii
+          'legacy neural runtime' | Set-Content -LiteralPath (Join-Path $directDest 'nvngx_dlssnr.dll') -Encoding ascii
+
+          'fake optiscaler proxy' | Set-Content -LiteralPath (Join-Path $directSource 'OptiScaler.dll') -Encoding ascii
+          "[DlssNr]`nEnabled=auto" | Set-Content -LiteralPath (Join-Path $directSource 'OptiScaler.ini') -Encoding ascii
+          'new direct neural runtime' | Set-Content -LiteralPath (Join-Path $directSource 'nvngx_dlssnr.dll') -Encoding ascii
+          'support backend' | Set-Content -LiteralPath (Join-Path $directSupport 'backend.dll') -Encoding ascii
+
+          $directReport = Join-Path $directRoot 'report.txt'
+          & ./installer/Import-CompatibilityPack.ps1 -PackPath $directRoot -InstalledNeural $directDest -WorkRoot $directWork -ReportPath $directReport | Out-Host
+
+          if (-not (Test-Path (Join-Path $directDest 'winmm.dll'))) { throw 'Direct importer did not stage OptiScaler as winmm.dll.' }
+          if (-not (Test-Path (Join-Path $directDest 'OptiScaler.ini'))) { throw 'Direct importer did not stage OptiScaler.ini.' }
+          if (-not (Test-Path (Join-Path $directDest 'OptiScaler\backend.dll'))) { throw 'Direct importer did not stage OptiScaler support directory.' }
+          if (Test-Path (Join-Path $directDest 'dxgi.dll')) { throw 'Direct importer left legacy ReShade proxy in place.' }
+          if (Test-Path (Join-Path $directDest 'renodx-dlss5.addon64')) { throw 'Direct importer left legacy RenoDX add-on in place.' }
+          if (-not (Select-String -LiteralPath $directReport -SimpleMatch 'Compatibility mode: optiscaler-direct-nr' -Quiet)) { throw 'Importer report did not record OptiScaler direct NR mode.' }
+
       - name: Configure
         shell: pwsh
         run: |
