@@ -7,6 +7,7 @@
 #include "TemporalGuides.h"
 
 #include <windows.h>
+#include <mmsystem.h>
 #include <shellapi.h>
 #include <winver.h>
 #include <Xinput.h>
