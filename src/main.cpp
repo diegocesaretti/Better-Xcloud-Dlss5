@@ -311,6 +311,9 @@ bool WaitForFirstFrame(WindowCapture& capture, CapturedFrame& frame)
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
+    // Keep an explicit WinMM import so a local OptiScaler proxy named winmm.dll
+    // is resolved by the Windows loader before wWinMain.
+    (void)timeGetTime();
     PrimeVersionProxyImport();
 
     const std::filesystem::path moduleDir = ModuleDirectory();
