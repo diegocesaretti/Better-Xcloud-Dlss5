@@ -116,7 +116,7 @@ jobs:
           'support backend' | Set-Content -LiteralPath (Join-Path $directSupport 'backend.dll') -Encoding ascii
 
           $directReport = Join-Path $directRoot 'report.txt'
-          & ./installer/Import-CompatibilityPack.ps1 -PackPath $directRoot -InstalledNeural $directDest -WorkRoot $directWork -ReportPath $directReport | Out-Host
+          & ./installer/Import-CompatibilityPack.ps1 -PackPath $directSource -InstalledNeural $directDest -WorkRoot $directWork -ReportPath $directReport | Out-Host
 
           if (-not (Test-Path (Join-Path $directDest 'winmm.dll'))) { throw 'Direct importer did not stage OptiScaler as winmm.dll.' }
           if (-not (Test-Path (Join-Path $directDest 'OptiScaler.ini'))) { throw 'Direct importer did not stage OptiScaler.ini.' }
