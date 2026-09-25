@@ -152,14 +152,8 @@ try {
         (Test-Path -LiteralPath (Join-Path $installedNeural 'nvngx_dlss.dll')) -and
         (Test-Path -LiteralPath (Join-Path $installedNeural 'nvngx_dlssnr.dll'))
 
-    # XCloudDLSS5Host is a raw-NGX carrier. version.dll is used only as the
-    # GTX/Turing compatibility shim; the host itself never calls Streamline.
-    # Therefore RenoDX must hook NGX directly even when the compatibility pack
-    # also contains Streamline plugins for ordinary games.
-    $renoHookMode = '2'
+    $optiDirect = Test-Path -LiteralPath (Join-Path $installedNeural 'BACKEND_OPTISCALER_DIRECT_NR.txt')
 
-    Write-Step 'Configuring RenoDX raw-NGX neural hook'
-    $reshadeIni = Join-Path $installedNeural 'ReShade.ini'
     Add-Type -TypeDefinition @'
 using System;
 using System.Text;
@@ -173,39 +167,93 @@ public static class BetterXcloudIni {
 }
 '@
 
-    $buffer = New-Object Text.StringBuilder 4096
-    [void][BetterXcloudIni]::GetPrivateProfileString('ADDON', 'DisabledAddons', '', $buffer, 4096, $reshadeIni)
-    $blocked = @(
-        'DLSS 5 Neural Rendering@renodx-dlss5.addon64',
-        'DLSS 5 Neural Rendering',
-        '@renodx-dlss5.addon64',
-        'renodx-dlss5.addon64'
-    )
-    $kept = @($buffer.ToString() -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and ($_ -notin $blocked) })
-    if (-not [BetterXcloudIni]::WritePrivateProfileString('ADDON', 'DisabledAddons', ($kept -join ','), $reshadeIni)) {
-        Fail 'Could not enable the RenoDX neural add-on in ReShade.ini.' 23
-    }
-    foreach ($entry in @(
-        @('EnableHooks', $renoHookMode),
-        @('NeuralUplift', '1'),
-        @('NREnableUpscaling', '0')
-    )) {
-        if (-not [BetterXcloudIni]::WritePrivateProfileString('RenoDX.DLSS5', $entry[0], $entry[1], $reshadeIni)) {
-            Fail "Could not write RenoDX setting $($entry[0])." 24
+    $renoHookMode = 'disabled'
+
+    if ($optiDirect) {
+        Write-Step 'Configuring OptiScaler built-in Neural Rendering backend'
+
+        $optiIni = Join-Path $installedNeural 'OptiScaler.ini'
+        if (-not (Test-Path -LiteralPath $optiIni)) {
+            Fail 'OptiScaler direct-NR package did not provide OptiScaler.ini.' 25
         }
-    }
-    Write-Host "RenoDX neural hook enabled for the bridge (EnableHooks=$renoHookMode)." -ForegroundColor Green
 
-    # Attach-only mirror mode intentionally disables interactive overlays.
-    # Chrome/xCloud owns all keyboard, mouse and gamepad input; configuration is
-    # applied from INI files instead of opening ReShade/OptiScaler on top of the
-    # game session.
-    [void][BetterXcloudIni]::WritePrivateProfileString('INPUT', 'KeyOverlay', '0,0,0,0', $reshadeIni)
-    [void][BetterXcloudIni]::WritePrivateProfileString('GENERAL', 'TutorialProgress', '4', $reshadeIni)
+        $settings = @(
+            @('ProcessFilter', 'TargetProcessName', 'XCloudDLSS5Host.exe'),
+            @('DlssNr', 'Enabled', 'true'),
+            @('DlssNr', 'RunBeforeSR', 'false'),
+            @('DlssNr', 'Passes', '1'),
+            @('DlssNr', 'WorkingScale', '0.50'),
+            @('DlssNr', 'AutoCapture', 'true'),
+            @('Menu', 'OverlayMenu', 'false'),
+            @('Menu', 'ShortcutKey', '-1'),
+            @('Hotfix', 'ManualInputPolling', 'false'),
+            @('Hotfix', 'PreferDedicatedGpu', 'true'),
+            @('Log', 'LogToFile', 'true'),
+            @('Log', 'LogLevel', '2'),
+            @('Log', 'LogToConsole', 'false'),
+            @('Log', 'LogToNGX', 'true'),
+            @('Log', 'LogFileName', 'OptiScaler.log')
+        )
 
-    if (Test-Path -LiteralPath (Join-Path $installedNeural 'version.dll')) {
-        Write-Step 'Configuring GTX compatibility shim for headless bridge use'
+        foreach ($entry in $settings) {
+            if (-not [BetterXcloudIni]::WritePrivateProfileString(
+                    $entry[0], $entry[1], $entry[2], $optiIni)) {
+                Fail "Could not write OptiScaler setting [$($entry[0])] $($entry[1])." 26
+            }
+        }
+
+        $runtimeHash = (Get-FileHash -LiteralPath (Join-Path $installedNeural 'nvngx_dlssnr.dll') -Algorithm SHA256).Hash.ToLowerInvariant()
+        $optiHash = (Get-FileHash -LiteralPath (Join-Path $installedNeural 'winmm.dll') -Algorithm SHA256).Hash.ToLowerInvariant()
+
         @"
+Backend: OptiScaler built-in Neural Rendering
+Injection proxy: winmm.dll
+Target process: XCloudDLSS5Host.exe
+nvngx_dlssnr.dll SHA256: $runtimeHash
+OptiScaler proxy SHA256: $optiHash
+Initial NR settings:
+  Enabled=true
+  RunBeforeSR=false
+  Passes=1
+  WorkingScale=0.50
+"@ | Set-Content -LiteralPath (Join-Path $InstallRoot 'NEURAL_BACKEND_INFO.txt') -Encoding UTF8
+
+        Write-Host 'OptiScaler direct-NR backend enabled. RenoDX/ReShade path disabled.' -ForegroundColor Green
+        Write-Host "NR runtime SHA256: $runtimeHash" -ForegroundColor DarkGray
+    } else {
+        # Legacy route retained as fallback for the older compatibility pack.
+        $renoHookMode = '2'
+
+        Write-Step 'Configuring RenoDX raw-NGX neural hook'
+        $reshadeIni = Join-Path $installedNeural 'ReShade.ini'
+
+        $buffer = New-Object Text.StringBuilder 4096
+        [void][BetterXcloudIni]::GetPrivateProfileString('ADDON', 'DisabledAddons', '', $buffer, 4096, $reshadeIni)
+        $blocked = @(
+            'DLSS 5 Neural Rendering@renodx-dlss5.addon64',
+            'DLSS 5 Neural Rendering',
+            '@renodx-dlss5.addon64',
+            'renodx-dlss5.addon64'
+        )
+        $kept = @($buffer.ToString() -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and ($_ -notin $blocked) })
+        if (-not [BetterXcloudIni]::WritePrivateProfileString('ADDON', 'DisabledAddons', ($kept -join ','), $reshadeIni)) {
+            Fail 'Could not enable the RenoDX neural add-on in ReShade.ini.' 23
+        }
+        foreach ($entry in @(
+            @('EnableHooks', $renoHookMode),
+            @('NeuralUplift', '1'),
+            @('NREnableUpscaling', '0')
+        )) {
+            if (-not [BetterXcloudIni]::WritePrivateProfileString('RenoDX.DLSS5', $entry[0], $entry[1], $reshadeIni)) {
+                Fail "Could not write RenoDX setting $($entry[0])." 24
+            }
+        }
+
+        [void][BetterXcloudIni]::WritePrivateProfileString('INPUT', 'KeyOverlay', '0,0,0,0', $reshadeIni)
+        [void][BetterXcloudIni]::WritePrivateProfileString('GENERAL', 'TutorialProgress', '4', $reshadeIni)
+
+        if (Test-Path -LiteralPath (Join-Path $installedNeural 'version.dll')) {
+            @"
 [Debug]
 DisableUI=true
 EarlyInit=true
@@ -220,14 +268,9 @@ ForceLoadDLSSG=false
 DynamicMFG=false
 MFGHotkeys=false
 "@ | Set-Content -LiteralPath (Join-Path $installedNeural 'dlss-enabler.ini') -Encoding ASCII
-        Write-Host 'DLSS Enabler UI disabled; compatibility shim will run headless.' -ForegroundColor Green
-
-        $optiIni = Join-Path $installedNeural 'OptiScaler.ini'
-        if (-not (Test-Path -LiteralPath $optiIni)) {
-            New-Item -ItemType File -Path $optiIni -Force | Out-Null
         }
-        [void][BetterXcloudIni]::WritePrivateProfileString('Menu', 'OverlayMenu', 'false', $optiIni)
-        Write-Host 'Interactive OptiScaler overlay disabled in attach-only mirror mode.' -ForegroundColor Green
+
+        Write-Host "Legacy RenoDX neural hook enabled (EnableHooks=$renoHookMode)." -ForegroundColor Yellow
     }
 
     New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
@@ -241,7 +284,9 @@ Upstream package SHA256: $UpstreamSha256
 Host source: https://github.com/diegocesaretti/Better-Xcloud-Dlss5
 Compatibility pack: $resolvedCompatibilityPack
 Compatibility pack imported: $compatImported
+Neural backend: $(if ($optiDirect) { 'OptiScaler built-in NR' } else { 'Legacy RenoDX' })
 RenoDX EnableHooks: $renoHookMode
+OptiScaler direct NR: $optiDirect
 Streamline/version.dll compatibility route: $streamlineCompat
 "@ | Set-Content -LiteralPath (Join-Path $InstallRoot 'INSTALL_INFO.txt') -Encoding UTF8
 
@@ -264,6 +309,9 @@ Streamline/version.dll compatibility route: $streamlineCompat
     Write-Host 'Choose Xbox App (recommended), Browser, or Auto, then click Start mirror.'
     Write-Host 'The mirror never injects controller, keyboard or mouse input into the target.'
     Write-Host 'Use the panel to show/hide the mirror, stop it, edit settings, open logs, or copy diagnostics.'
+    if ($optiDirect) {
+        Write-Host 'Backend: OptiScaler built-in Neural Rendering (direct compatibility fallback).' -ForegroundColor Green
+    }
     Write-Host ''
     Write-Host 'Better xCloud is recommended and should be installed from its official project.'
 
