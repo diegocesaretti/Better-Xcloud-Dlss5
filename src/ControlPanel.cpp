@@ -138,12 +138,14 @@ bool ControlPanel::Initialize()
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                 385, 380, 130, 32, hwnd_, kIdCopyDiagnostics);
 
-    MakeControl(0, L"BUTTON", L"ReShade.ini",
-                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                20, 425, 120, 32, hwnd_, kIdOpenReShade);
-    MakeControl(0, L"BUTTON", L"OptiScaler.ini",
-                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                150, 425, 120, 32, hwnd_, kIdOpenOptiScaler);
+    backendConfigButton_ = MakeControl(
+        0, L"BUTTON", L"Backend config",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        20, 425, 120, 32, hwnd_, kIdOpenReShade);
+    secondaryConfigButton_ = MakeControl(
+        0, L"BUTTON", L"OptiScaler.ini",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        150, 425, 120, 32, hwnd_, kIdOpenOptiScaler);
 
     MakeControl(
         0, L"STATIC",
@@ -170,11 +172,11 @@ bool ControlPanel::Initialize()
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
         330, 505, 120, 32, hwnd_, kIdSaveSettings);
 
-    MakeControl(
+    settingsHint_ = MakeControl(
         0, L"STATIC",
-        L"Tested defaults: Neural Uplift ON, NR Upscaling OFF.",
+        L"Backend-specific settings are applied on next mirror start.",
         WS_CHILD | WS_VISIBLE | SS_LEFT,
-        20, 545, 430, 24, hwnd_, 0);
+        20, 545, 520, 24, hwnd_, 0);
 
     SetRendererSettings(true, false);
 
@@ -252,17 +254,46 @@ bool ControlPanel::NrUpscalingEnabled() const
            SendMessageW(nrUpscalingCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
 }
 
-void ControlPanel::SetRendererSettings(bool neuralUplift, bool nrUpscaling)
+void ControlPanel::SetRendererSettings(bool firstOption, bool secondOption)
 {
     if (neuralUpliftCheck_) {
         SendMessageW(
             neuralUpliftCheck_, BM_SETCHECK,
-            neuralUplift ? BST_CHECKED : BST_UNCHECKED, 0);
+            firstOption ? BST_CHECKED : BST_UNCHECKED, 0);
     }
     if (nrUpscalingCheck_) {
         SendMessageW(
             nrUpscalingCheck_, BM_SETCHECK,
-            nrUpscaling ? BST_CHECKED : BST_UNCHECKED, 0);
+            secondOption ? BST_CHECKED : BST_UNCHECKED, 0);
+    }
+}
+
+void ControlPanel::SetBackendMode(bool optiScalerDirect)
+{
+    if (neuralUpliftCheck_) {
+        SetWindowTextW(
+            neuralUpliftCheck_,
+            optiScalerDirect ? L"Neural Rendering" : L"Neural Uplift");
+    }
+    if (nrUpscalingCheck_) {
+        SetWindowTextW(
+            nrUpscalingCheck_,
+            optiScalerDirect ? L"Run before SR (faster)" : L"NR Upscaling");
+    }
+    if (backendConfigButton_) {
+        SetWindowTextW(
+            backendConfigButton_,
+            optiScalerDirect ? L"OptiScaler.ini" : L"ReShade.ini");
+    }
+    if (secondaryConfigButton_) {
+        ShowWindow(secondaryConfigButton_, optiScalerDirect ? SW_HIDE : SW_SHOW);
+    }
+    if (settingsHint_) {
+        SetWindowTextW(
+            settingsHint_,
+            optiScalerDirect
+                ? L"Direct NR defaults: enabled, 1 pass, 50% model scale. Pre-SR can reduce GPU cost."
+                : L"Legacy defaults: Neural Uplift ON, NR Upscaling OFF.");
     }
 }
 
