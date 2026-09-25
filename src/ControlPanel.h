@@ -36,7 +36,8 @@ public:
     void SetMirrorVisible(bool visible);
     bool NeuralUpliftEnabled() const;
     bool NrUpscalingEnabled() const;
-    void SetRendererSettings(bool neuralUplift, bool nrUpscaling);
+    void SetRendererSettings(bool firstOption, bool secondOption);
+    void SetBackendMode(bool optiScalerDirect);
 
 private:
     explicit ControlPanel(HINSTANCE instance) : instance_(instance) {}
@@ -58,6 +59,9 @@ private:
     HWND toggleButton_{};
     HWND neuralUpliftCheck_{};
     HWND nrUpscalingCheck_{};
+    HWND backendConfigButton_{};
+    HWND secondaryConfigButton_{};
+    HWND settingsHint_{};
     HFONT font_{};
     bool alive_{true};
     bool running_{false};
