@@ -27,10 +27,17 @@ $env:BETTER_XCLOUD_DLSS5_ALLOW_UNSUPPORTED_SR = '1'
 # Keep the GPU identity on the real Turing route. The pinned ShortFuse
 # 310.8.SF-v2 neural runtime is the component that provides the experimental
 # Turing neural path; version.dll remains a local compatibility shim.
-$hostArgs = @(
-    '--dlss-arch=turing',
-    '--dlss-hags=sys',
-    '--dlss-logging=on'
-)
+$optiDirect = Test-Path -LiteralPath (Join-Path $runtimeDir 'BACKEND_OPTISCALER_DIRECT_NR.txt')
 
-Start-Process -FilePath $hostExe -WorkingDirectory $runtimeDir -ArgumentList $hostArgs
+if ($optiDirect) {
+    # OptiScaler is loaded locally as winmm.dll and owns the NR compatibility
+    # fallback. Do not pass legacy DLSS-Enabler command-line switches.
+    Start-Process -FilePath $hostExe -WorkingDirectory $runtimeDir
+} else {
+    $hostArgs = @(
+        '--dlss-arch=turing',
+        '--dlss-hags=sys',
+        '--dlss-logging=on'
+    )
+    Start-Process -FilePath $hostExe -WorkingDirectory $runtimeDir -ArgumentList $hostArgs
+}
