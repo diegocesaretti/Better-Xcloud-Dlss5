@@ -236,33 +236,60 @@ std::wstring TargetKindName(CaptureTargetPreference kind)
 }
 
 bool SaveRendererSettings(
-    const std::filesystem::path& reshadeIni,
-    bool neuralUplift,
-    bool nrUpscaling)
+    const std::filesystem::path& configPath,
+    bool optiScalerDirect,
+    bool firstOption,
+    bool secondOption)
 {
+    if (optiScalerDirect) {
+        const bool a = WritePrivateProfileStringW(
+            L"DlssNr",
+            L"Enabled",
+            firstOption ? L"true" : L"false",
+            configPath.c_str()) != FALSE;
+        const bool b = WritePrivateProfileStringW(
+            L"DlssNr",
+            L"RunBeforeSR",
+            secondOption ? L"true" : L"false",
+            configPath.c_str()) != FALSE;
+        return a && b;
+    }
+
     const bool a = WritePrivateProfileStringW(
         L"RenoDX.DLSS5",
         L"NeuralUplift",
-        neuralUplift ? L"1" : L"0",
-        reshadeIni.c_str()) != FALSE;
+        firstOption ? L"1" : L"0",
+        configPath.c_str()) != FALSE;
     const bool b = WritePrivateProfileStringW(
         L"RenoDX.DLSS5",
         L"NREnableUpscaling",
-        nrUpscaling ? L"1" : L"0",
-        reshadeIni.c_str()) != FALSE;
+        secondOption ? L"1" : L"0",
+        configPath.c_str()) != FALSE;
     return a && b;
 }
 
 void LoadRendererSettings(
     ControlPanel& panel,
-    const std::filesystem::path& reshadeIni)
+    const std::filesystem::path& configPath,
+    bool optiScalerDirect)
 {
+    if (optiScalerDirect) {
+        const bool enabled =
+            GetPrivateProfileIntW(
+                L"DlssNr", L"Enabled", 1, configPath.c_str()) != 0;
+        const bool runBefore =
+            GetPrivateProfileIntW(
+                L"DlssNr", L"RunBeforeSR", 0, configPath.c_str()) != 0;
+        panel.SetRendererSettings(enabled, runBefore);
+        return;
+    }
+
     const bool neuralUplift =
         GetPrivateProfileIntW(
-            L"RenoDX.DLSS5", L"NeuralUplift", 1, reshadeIni.c_str()) != 0;
+            L"RenoDX.DLSS5", L"NeuralUplift", 1, configPath.c_str()) != 0;
     const bool nrUpscaling =
         GetPrivateProfileIntW(
-            L"RenoDX.DLSS5", L"NREnableUpscaling", 0, reshadeIni.c_str()) != 0;
+            L"RenoDX.DLSS5", L"NREnableUpscaling", 0, configPath.c_str()) != 0;
     panel.SetRendererSettings(neuralUplift, nrUpscaling);
 }
 
@@ -331,7 +358,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     const auto moduleDirForUi = ModuleDirectory();
     const auto reshadeIniPath = moduleDirForUi / L"ReShade.ini";
     const auto optiIniPath = moduleDirForUi / L"OptiScaler.ini";
-    LoadRendererSettings(*panel, reshadeIniPath);
+    const bool optiScalerDirect =
+        std::filesystem::exists(moduleDirForUi / L"BACKEND_OPTISCALER_DIRECT_NR.txt");
+    const auto activeConfigPath =
+        optiScalerDirect ? optiIniPath : reshadeIniPath;
+    panel->SetBackendMode(optiScalerDirect);
+    LoadRendererSettings(*panel, activeConfigPath, optiScalerDirect);
 
     while (panel->Alive() && !browser.hwnd) {
         PumpMessages();
@@ -359,7 +391,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 OpenPath(moduleDirForUi);
                 break;
             case ControlPanelCommand::OpenReShadeConfig:
-                OpenPath(reshadeIniPath);
+                OpenPath(activeConfigPath);
                 break;
             case ControlPanelCommand::OpenOptiScalerConfig:
                 OpenPath(optiIniPath);
@@ -370,13 +402,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 break;
             case ControlPanelCommand::SaveSettings:
                 if (SaveRendererSettings(
-                        reshadeIniPath,
+                        activeConfigPath,
+                        optiScalerDirect,
                         panel->NeuralUpliftEnabled(),
                         panel->NrUpscalingEnabled())) {
                     panel->SetStatus(
                         L"Renderer settings saved. They will apply the next time the mirror starts.");
                 } else {
-                    panel->SetStatus(L"Could not write ReShade.ini.");
+                    panel->SetStatus(
+                        optiScalerDirect
+                            ? L"Could not write OptiScaler.ini."
+                            : L"Could not write ReShade.ini.");
                 }
                 break;
             case ControlPanelCommand::Close:
@@ -579,7 +615,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 OpenPath(ModuleDirectory());
                 break;
             case ControlPanelCommand::OpenReShadeConfig:
-                OpenPath(ModuleDirectory() / L"ReShade.ini");
+                OpenPath(
+                    optiScalerDirect
+                        ? ModuleDirectory() / L"OptiScaler.ini"
+                        : ModuleDirectory() / L"ReShade.ini");
                 break;
             case ControlPanelCommand::OpenOptiScalerConfig:
                 OpenPath(ModuleDirectory() / L"OptiScaler.ini");
@@ -591,13 +630,19 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 break;
             case ControlPanelCommand::SaveSettings:
                 if (SaveRendererSettings(
-                        ModuleDirectory() / L"ReShade.ini",
+                        optiScalerDirect
+                            ? ModuleDirectory() / L"OptiScaler.ini"
+                            : ModuleDirectory() / L"ReShade.ini",
+                        optiScalerDirect,
                         panel->NeuralUpliftEnabled(),
                         panel->NrUpscalingEnabled())) {
                     panel->SetStatus(
                         L"Renderer settings saved. Stop and relaunch the mirror to apply them.");
                 } else {
-                    panel->SetStatus(L"Could not write ReShade.ini.");
+                    panel->SetStatus(
+                        optiScalerDirect
+                            ? L"Could not write OptiScaler.ini."
+                            : L"Could not write ReShade.ini.");
                 }
                 break;
             default:
@@ -818,11 +863,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
             diagnosticsText =
                 L"Better Xcloud DLSS5 diagnostics\r\n"
-                L"Mode: full-window mirror / target-owned input\r\n" +
+                L"Mode: full-window mirror / target-owned input\r\n"
+                L"Neural backend: " +
+                std::wstring(optiScalerDirect ? L"OptiScaler built-in direct NR" : L"Legacy RenoDX") +
+                L"\r\n" +
                 stats.str() +
                 L"\r\nRuntime: " + ModuleDirectory().wstring() +
                 L"\r\nLive log: " + (ModuleDirectory() / L"XCloudDLSS5-live.log").wstring() +
-                L"\r\nReShade log: " + (ModuleDirectory() / L"ReShade.log").wstring() +
+                L"\r\nBackend log: " +
+                (optiScalerDirect
+                    ? (ModuleDirectory() / L"OptiScaler.log").wstring()
+                    : (ModuleDirectory() / L"ReShade.log").wstring()) +
                 L"\r\nDLSS log: " + (ModuleDirectory() / L"DLSSVideoPlayer.log").wstring();
 
             statsWindowStart = statsNow;
