@@ -46,7 +46,7 @@ const ParamDesc kParams[] = {
     {L"ResidualAcrossRR", L"Residual across RR", ParamKind::Bool, true, 0,0,0, L"auto", nullptr, L"General"},
     {L"ResidualAcrossRRBlend", L"RR residual history blend", ParamKind::Numeric, true, 0.01,1.0,0.01, L"auto", nullptr, L"General"},
 
-    {L"Passes", L"Model passes", ParamKind::Numeric, true, 1,3,1, L"auto", nullptr, L"Model"},
+    {L"Passes", L"Model passes", ParamKind::Numeric, true, 1,30,1, L"auto", nullptr, L"Model"},
     {L"UnlockPasses", L"Unlock up to 30 passes", ParamKind::Bool, false, 0,0,0, L"false", nullptr, L"Model"},
     {L"TransferStrength", L"Transfer strength", ParamKind::Numeric, true, 0,2,0.01, L"auto", nullptr, L"Model"},
     {L"ColourStrength", L"Colour strength", ParamKind::Numeric, true, 0,1,0.01, L"auto", nullptr, L"Model"},
