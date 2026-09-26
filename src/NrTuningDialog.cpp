@@ -467,7 +467,7 @@ private:
                 v=std::clamp(v,d.minValue,d.maxValue);
                 SendMessageW(w.control,TBM_SETPOS,TRUE,
                     static_cast<LPARAM>(std::llround(v*w.sliderScale)));
-                UpdateNumeric(w);
+                UpdateNumeric(w, false);
             } else if(d.kind==ParamKind::Bool){
                 int sel=0;
                 if(d.autoAllowed){
@@ -518,13 +518,13 @@ private:
         }
     }
 
-    void UpdateNumeric(Widget& w)
+    void UpdateNumeric(Widget& w, bool clearAuto = true)
     {
         const int pos=static_cast<int>(SendMessageW(w.control,TBM_GETPOS,0,0));
         const double v=static_cast<double>(pos)/w.sliderScale;
         const std::wstring value=FormatNumber(v,w.desc->step);
         if(w.valueLabel) SetWindowTextW(w.valueLabel,value.c_str());
-        if(w.autoCheck) SendMessageW(w.autoCheck,BM_SETCHECK,BST_UNCHECKED,0);
+        if(clearAuto && w.autoCheck) SendMessageW(w.autoCheck,BM_SETCHECK,BST_UNCHECKED,0);
     }
 
     void Save()
