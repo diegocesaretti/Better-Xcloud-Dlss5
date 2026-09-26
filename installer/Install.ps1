@@ -199,6 +199,10 @@ public static class BetterXcloudIni {
             Fail 'OptiScaler direct-NR package did not provide OptiScaler.ini.' 25
         }
 
+        $xefgAvailable =
+            (Test-Path -LiteralPath (Join-Path $installedNeural 'OptiScaler\libxess_fg.dll')) -and
+            (Test-Path -LiteralPath (Join-Path $installedNeural 'OptiScaler\libxell.dll'))
+
         $settings = @(
             @('ProcessFilter', 'TargetProcessName', 'XCloudDLSS5Host.exe'),
             @('DlssNr', 'Enabled', 'true'),
@@ -206,8 +210,20 @@ public static class BetterXcloudIni {
             @('DlssNr', 'Passes', '1'),
             @('DlssNr', 'WorkingScale', '0.50'),
             @('DlssNr', 'AutoCapture', 'true'),
+
+            # Match the new video pack's OptiFG route. XeFG is the preferred
+            # output for our external carrier because it works from the
+            # upscaler source and does not require native DLSS-G support.
+            @('FrameGen', 'Enabled', $(if ($xefgAvailable) { 'true' } else { 'false' })),
+            @('FrameGen', 'FGInput', 'upscaler'),
+            @('FrameGen', 'FGOutput', 'xefg'),
+            @('FrameGen', 'AllowedFrameAhead', '1'),
+            @('XeFG', 'InterpolationCount', '1'),
+            @('OptiFG', 'DisableHUDFix', 'true'),
+
             @('Menu', 'OverlayMenu', 'true'),
             @('Menu', 'ShortcutKey', '0x2D'),
+            @('Menu', 'FGShortcutKey', '0x23'),
             @('Hotfix', 'ManualInputPolling', 'true'),
             @('Hotfix', 'PreferDedicatedGpu', 'true'),
             @('Log', 'LogToFile', 'true'),
@@ -241,9 +257,23 @@ Initial NR settings:
   OverlayMenu=true
   ShortcutKey=0x2D (Insert)
   ManualInputPolling=true
+
+Frame Generation:
+  XeFG available=$xefgAvailable
+  Enabled=$(if ($xefgAvailable) { 'true' } else { 'false' })
+  FGInput=upscaler
+  FGOutput=xefg
+  XeFG InterpolationCount=1 (2x)
+  OptiFG DisableHUDFix=true
+  FG shortcut=End
 "@ | Set-Content -LiteralPath (Join-Path $InstallRoot 'NEURAL_BACKEND_INFO.txt') -Encoding UTF8
 
         Write-Host 'OptiScaler direct-NR backend enabled. RenoDX/ReShade path disabled.' -ForegroundColor Green
+        if ($xefgAvailable) {
+            Write-Host 'XeFG 2x frame generation enabled by default (upscaler -> XeFG).' -ForegroundColor Green
+        } else {
+            Write-Host 'XeFG runtime not found; frame generation left disabled.' -ForegroundColor Yellow
+        }
         Write-Host "NR runtime SHA256: $runtimeHash" -ForegroundColor DarkGray
     } else {
         # Legacy route retained as fallback for the older compatibility pack.
