@@ -400,6 +400,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             case ControlPanelCommand::OpenOptiScalerConfig:
                 OpenPath(optiIniPath);
                 break;
+            case ControlPanelCommand::OpenBackendMenu:
+                panel->SetStatus(
+                    L"Start the mirror first, then use Open NR menu.");
+                break;
             case ControlPanelCommand::CopyDiagnostics:
                 CopyTextToClipboard(panel->Hwnd(), diagnosticsText);
                 panel->SetStatus(L"Diagnostics copied to clipboard.");
@@ -626,6 +630,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 break;
             case ControlPanelCommand::OpenOptiScalerConfig:
                 OpenPath(ModuleDirectory() / L"OptiScaler.ini");
+                break;
+            case ControlPanelCommand::OpenBackendMenu:
+                if (optiScalerDirect) {
+                    // OptiScaler subclasses this host window. Sending Insert
+                    // directly to it is reliable even while Xbox App owns input.
+                    PostMessageW(overlay, WM_KEYDOWN, VK_INSERT, 0);
+                    PostMessageW(overlay, WM_KEYUP, VK_INSERT, 0xC0000000);
+                    panel->SetStatus(
+                        L"Requested OptiScaler Neural Rendering menu. Insert also toggles it.");
+                }
                 break;
             case ControlPanelCommand::CopyDiagnostics:
                 if (CopyTextToClipboard(panel->Hwnd(), diagnosticsText)) {
