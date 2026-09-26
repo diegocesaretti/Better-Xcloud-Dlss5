@@ -20,6 +20,7 @@ constexpr int kIdSave = 9001;
 constexpr int kIdReload = 9002;
 constexpr int kIdDefaults = 9003;
 constexpr int kIdClose = 9004;
+constexpr int kIdExtendedPass = 9050;
 
 enum class ParamKind { Bool, Numeric, Enum, Key };
 
@@ -95,6 +96,17 @@ const ParamDesc kParams[] = {
         L"Off=0;Model input=1;Raw model output=2;Amplified difference=3", L"Debug"},
     {L"AutoCapture", L"Auto capture comparison frames", ParamKind::Bool, true, 0,0,0, L"auto", nullptr, L"Debug"},
     {L"ToggleKey", L"NR toggle virtual key", ParamKind::Key, true, 0,0,0, L"auto", nullptr, L"Debug"},
+};
+
+const ParamDesc kExtendedPassParams[] = {
+    {L"Preset", L"Preset", ParamKind::Numeric, true, 0,3,1, L"auto", nullptr, L"Extended pass"},
+    {L"Style", L"Style", ParamKind::Enum, true, 0,0,0, L"auto",
+        L"Standard=0;Natural=1;Cinematic=2", L"Extended pass"},
+    {L"Intensity", L"Intensity", ParamKind::Numeric, true, 0,2,0.01, L"auto", nullptr, L"Extended pass"},
+    {L"LocalStructure", L"Local structure", ParamKind::Numeric, true, 0,2,0.01, L"auto", nullptr, L"Extended pass"},
+    {L"LocalTone", L"Local tone", ParamKind::Numeric, true, 0,2,0.01, L"auto", nullptr, L"Extended pass"},
+    {L"SkinStructure", L"Skin structure", ParamKind::Numeric, true, -1,2,0.01, L"auto", nullptr, L"Extended pass"},
+    {L"AutoMask", L"AutoMask", ParamKind::Bool, true, 0,0,0, L"auto", nullptr, L"Extended pass"},
 };
 
 struct Widget {
@@ -276,6 +288,78 @@ private:
         }
 
         contentHeight_+=12;
+        HWND extHeading=Make(L"STATIC",L"Extended pass overrides (4-30)",SS_LEFT,
+                             20,contentHeight_,840,24);
+        HFONT extBold=CreateFontW(-18,0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,
+            DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_DONTCARE,L"Segoe UI");
+        if(extBold){ SendMessageW(extHeading,WM_SETFONT,reinterpret_cast<WPARAM>(extBold),TRUE); groupFonts_.push_back(extBold); }
+        contentHeight_+=34;
+
+        Make(L"STATIC",L"Edit pass:",SS_LEFT,30,contentHeight_+5,100,24);
+        extPassCombo_=Make(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_VSCROLL,
+                           135,contentHeight_,110,260,kIdExtendedPass);
+        for(int pass=4;pass<=30;++pass){
+            const std::wstring label=L"Pass "+std::to_wstring(pass);
+            SendMessageW(extPassCombo_,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label.c_str()));
+        }
+        SendMessageW(extPassCombo_,CB_SETCURSEL,0,0);
+        Make(L"STATIC",L"Only overrides for the selected pass are shown; omitted values inherit pass 1.",
+             SS_LEFT,270,contentHeight_+3,570,28);
+        contentHeight_+=38;
+
+        extWidgets_.reserve(std::size(kExtendedPassParams));
+        for(size_t i=0;i<std::size(kExtendedPassParams);++i){
+            const auto& d=kExtendedPassParams[i];
+            Make(L"STATIC",d.label,SS_LEFT,30,contentHeight_+5,230,24);
+
+            Widget w{};
+            w.desc=&d;
+            const int baseId=20000+static_cast<int>(i)*4;
+
+            if(d.kind==ParamKind::Numeric){
+                w.control=Make(TRACKBAR_CLASSW,L"",TBS_HORZ|TBS_NOTICKS,
+                    270,contentHeight_,390,30,baseId);
+                w.sliderScale=std::max(1,static_cast<int>(std::llround(1.0/d.step)));
+                SendMessageW(w.control,TBM_SETRANGEMIN,FALSE,
+                    static_cast<LPARAM>(std::llround(d.minValue*w.sliderScale)));
+                SendMessageW(w.control,TBM_SETRANGEMAX,FALSE,
+                    static_cast<LPARAM>(std::llround(d.maxValue*w.sliderScale)));
+                w.valueLabel=Make(L"STATIC",L"",SS_CENTER,
+                    670,contentHeight_+4,80,24,baseId+1);
+                w.autoCheck=Make(L"BUTTON",L"Auto",BS_AUTOCHECKBOX,
+                    765,contentHeight_+1,80,26,baseId+2);
+            } else if(d.kind==ParamKind::Enum){
+                w.control=Make(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_VSCROLL,
+                    270,contentHeight_,300,220,baseId);
+                SendMessageW(w.control,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(L"Auto"));
+                w.enumValues.push_back(L"auto");
+                std::wstring choices=d.choices?d.choices:L"";
+                size_t pos=0;
+                while(pos<choices.size()){
+                    size_t semi=choices.find(L';',pos);
+                    std::wstring item=choices.substr(pos,semi==std::wstring::npos?std::wstring::npos:semi-pos);
+                    size_t eq=item.find(L'=');
+                    std::wstring label=eq==std::wstring::npos?item:item.substr(0,eq);
+                    std::wstring value=eq==std::wstring::npos?item:item.substr(eq+1);
+                    SendMessageW(w.control,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label.c_str()));
+                    w.enumValues.push_back(value);
+                    if(semi==std::wstring::npos) break;
+                    pos=semi+1;
+                }
+            } else {
+                w.control=Make(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_VSCROLL,
+                    270,contentHeight_,250,180,baseId);
+                SendMessageW(w.control,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(L"Auto"));
+                SendMessageW(w.control,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(L"Off"));
+                SendMessageW(w.control,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(L"On"));
+            }
+
+            extWidgets_.push_back(std::move(w));
+            contentHeight_+=38;
+        }
+
+        contentHeight_+=12;
         Make(L"BUTTON",L"Save",BS_DEFPUSHBUTTON,20,contentHeight_,100,32,kIdSave);
         Make(L"BUTTON",L"Reload",BS_PUSHBUTTON,130,contentHeight_,100,32,kIdReload);
         Make(L"BUTTON",L"Pack defaults",BS_PUSHBUTTON,240,contentHeight_,120,32,kIdDefaults);
@@ -288,6 +372,73 @@ private:
         SCROLLINFO si{sizeof(si),SIF_RANGE|SIF_PAGE|SIF_POS};
         si.nMin=0; si.nMax=contentHeight_; si.nPage=740; si.nPos=0;
         SetScrollInfo(hwnd_,SB_VERT,&si,TRUE);
+    }
+
+    std::wstring ExtendedKey(const ParamDesc& d) const
+    {
+        return L"Pass" + std::to_wstring(extPass_) + d.key;
+    }
+
+    void LoadExtendedPass()
+    {
+        loadingExtended_=true;
+        for(auto& w:extWidgets_){
+            const auto& d=*w.desc;
+            const std::wstring key=ExtendedKey(d);
+            std::wstring value=ReadIni(ini_,key.c_str(),L"auto");
+            const bool isAuto=IEquals(value,L"auto");
+
+            if(d.kind==ParamKind::Numeric){
+                if(w.autoCheck) SendMessageW(w.autoCheck,BM_SETCHECK,isAuto?BST_CHECKED:BST_UNCHECKED,0);
+                double v=(std::wstring(d.key)==L"SkinStructure")?-1.0:1.0;
+                if(!isAuto){
+                    wchar_t* end=nullptr;
+                    v=wcstod(value.c_str(),&end);
+                    if(end==value.c_str()) v=1.0;
+                }
+                v=std::clamp(v,d.minValue,d.maxValue);
+                SendMessageW(w.control,TBM_SETPOS,TRUE,
+                    static_cast<LPARAM>(std::llround(v*w.sliderScale)));
+                const std::wstring shown=FormatNumber(v,d.step);
+                if(w.valueLabel) SetWindowTextW(w.valueLabel,shown.c_str());
+            } else if(d.kind==ParamKind::Enum){
+                int sel=0;
+                for(size_t i=0;i<w.enumValues.size();++i){
+                    if(IEquals(value,w.enumValues[i].c_str())){ sel=static_cast<int>(i); break; }
+                }
+                SendMessageW(w.control,CB_SETCURSEL,sel,0);
+            } else {
+                int sel=isAuto?0:(IEquals(value,L"true")||value==L"1"?2:1);
+                SendMessageW(w.control,CB_SETCURSEL,sel,0);
+            }
+        }
+        loadingExtended_=false;
+    }
+
+    void SaveExtendedPass()
+    {
+        if(loadingExtended_) return;
+        for(auto& w:extWidgets_){
+            const auto& d=*w.desc;
+            const std::wstring key=ExtendedKey(d);
+            std::wstring value;
+
+            if(d.kind==ParamKind::Numeric){
+                if(w.autoCheck&&SendMessageW(w.autoCheck,BM_GETCHECK,0,0)==BST_CHECKED){
+                    value=L"auto";
+                } else {
+                    const int pos=static_cast<int>(SendMessageW(w.control,TBM_GETPOS,0,0));
+                    value=FormatNumber(static_cast<double>(pos)/w.sliderScale,d.step);
+                }
+            } else if(d.kind==ParamKind::Enum){
+                const int sel=static_cast<int>(SendMessageW(w.control,CB_GETCURSEL,0,0));
+                value=(sel>=0&&static_cast<size_t>(sel)<w.enumValues.size())?w.enumValues[sel]:L"auto";
+            } else {
+                const int sel=static_cast<int>(SendMessageW(w.control,CB_GETCURSEL,0,0));
+                value=sel==0?L"auto":(sel==2?L"true":L"false");
+            }
+            WritePrivateProfileStringW(L"DlssNr",key.c_str(),value.c_str(),ini_.c_str());
+        }
     }
 
     void Reload()
@@ -336,6 +487,7 @@ private:
                 SetWindowTextW(w.control,isAuto?L"0x2D":value.c_str());
             }
         }
+        LoadExtendedPass();
     }
 
     void Defaults()
@@ -357,6 +509,12 @@ private:
                     UpdateNumeric(w);
                 }
             }
+        }
+        for(auto& w:extWidgets_){
+            const auto& d=*w.desc;
+            if(w.autoCheck) SendMessageW(w.autoCheck,BM_SETCHECK,BST_CHECKED,0);
+            if(d.kind==ParamKind::Enum||d.kind==ParamKind::Bool)
+                SendMessageW(w.control,CB_SETCURSEL,0,0);
         }
     }
 
@@ -403,6 +561,8 @@ private:
             WritePrivateProfileStringW(L"DlssNr",d.key,value.c_str(),ini_.c_str());
         }
 
+        SaveExtendedPass();
+
         MessageBoxW(
             hwnd_,
             L"DLSS-NR settings saved. Restart the mirror for settings that rebuild the neural feature.\n\n"
@@ -436,9 +596,22 @@ private:
                         return 0;
                     }
                 }
+                for(auto& w:extWidgets_){
+                    if(w.control==control&&w.desc->kind==ParamKind::Numeric){
+                        UpdateNumeric(w);
+                        return 0;
+                    }
+                }
                 break;
             }
             case WM_COMMAND:
+                if(LOWORD(wp)==kIdExtendedPass && HIWORD(wp)==CBN_SELCHANGE){
+                    SaveExtendedPass();
+                    const int sel=static_cast<int>(SendMessageW(extPassCombo_,CB_GETCURSEL,0,0));
+                    extPass_=4+std::max(0,sel);
+                    LoadExtendedPass();
+                    return 0;
+                }
                 switch(LOWORD(wp)){
                     case kIdSave: Save(); return 0;
                     case kIdReload: Reload(); return 0;
@@ -483,7 +656,11 @@ private:
     HFONT font_{};
     std::filesystem::path ini_;
     std::vector<Widget> widgets_;
+    std::vector<Widget> extWidgets_;
     std::vector<HFONT> groupFonts_;
+    HWND extPassCombo_{};
+    int extPass_{4};
+    bool loadingExtended_{false};
     int contentHeight_{};
     int scrollPos_{};
 };
