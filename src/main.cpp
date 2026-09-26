@@ -1,6 +1,7 @@
 #include "WindowCapture.h"
 #include "WindowFinder.h"
 #include "ControlPanel.h"
+#include "NrTuningDialog.h"
 
 #include "D3D12Renderer.h"
 #include "DLSSBackend.h"
@@ -400,6 +401,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             case ControlPanelCommand::OpenOptiScalerConfig:
                 OpenPath(optiIniPath);
                 break;
+            case ControlPanelCommand::OpenNrTuner:
+                if (optiScalerDirect) {
+                    NrTuningDialog::Show(panel->Hwnd(), optiIniPath);
+                }
+                break;
             case ControlPanelCommand::OpenBackendMenu:
                 panel->SetStatus(
                     L"Start the mirror first, then use Open NR menu.");
@@ -630,6 +636,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 break;
             case ControlPanelCommand::OpenOptiScalerConfig:
                 OpenPath(ModuleDirectory() / L"OptiScaler.ini");
+                break;
+            case ControlPanelCommand::OpenNrTuner:
+                if (optiScalerDirect) {
+                    NrTuningDialog::Show(
+                        panel->Hwnd(),
+                        ModuleDirectory() / L"OptiScaler.ini");
+                }
                 break;
             case ControlPanelCommand::OpenBackendMenu:
                 if (optiScalerDirect) {
