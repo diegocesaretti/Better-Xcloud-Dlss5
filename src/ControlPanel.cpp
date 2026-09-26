@@ -1,5 +1,6 @@
 #include "ControlPanel.h"
 
+#include <algorithm>
 #include <array>
 
 namespace {
@@ -18,6 +19,8 @@ constexpr int kIdNeuralUplift = 1009;
 constexpr int kIdNrUpscaling = 1010;
 constexpr int kIdSaveSettings = 1011;
 constexpr int kIdRawConfig = 1012;
+constexpr int kIdFrameGen = 1013;
+constexpr int kIdFrameGenMultiplier = 1014;
 
 HWND MakeControl(
     DWORD exStyle,
@@ -81,7 +84,7 @@ bool ControlPanel::Initialize()
         kControlPanelClass,
         L"Better Xcloud DLSS5 - Control & Debug",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 620, 625,
+        CW_USEDEFAULT, CW_USEDEFAULT, 620, 700,
         nullptr, nullptr, instance_, this);
     if (!hwnd_) return false;
 
@@ -183,7 +186,31 @@ bool ControlPanel::Initialize()
         WS_CHILD | WS_VISIBLE | SS_LEFT,
         20, 545, 520, 24, hwnd_, 0);
 
+    MakeControl(0, L"STATIC", L"Frame Generation",
+                WS_CHILD | WS_VISIBLE,
+                20, 580, 160, 24, hwnd_, 0);
+
+    frameGenCheck_ = MakeControl(
+        0, L"BUTTON", L"XeFG enabled",
+        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        20, 608, 145, 28, hwnd_, kIdFrameGen);
+
+    frameGenMultiplierCombo_ = MakeControl(
+        0, L"COMBOBOX", L"",
+        WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
+        175, 606, 120, 160, hwnd_, kIdFrameGenMultiplier);
+    SendMessageW(frameGenMultiplierCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"2x"));
+    SendMessageW(frameGenMultiplierCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"3x"));
+    SendMessageW(frameGenMultiplierCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"4x"));
+
+    MakeControl(
+        0, L"STATIC",
+        L"XeFG uses OptiFG from the DLSS carrier. Restart mirror after changes.",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        310, 606, 280, 42, hwnd_, 0);
+
     SetRendererSettings(true, false);
+    SetFrameGenSettings(true, 2);
 
     EnumChildWindows(hwnd_, [](HWND child, LPARAM param) -> BOOL {
         reinterpret_cast<ControlPanel*>(param)->ApplyFont(child);
@@ -270,6 +297,32 @@ void ControlPanel::SetRendererSettings(bool firstOption, bool secondOption)
         SendMessageW(
             nrUpscalingCheck_, BM_SETCHECK,
             secondOption ? BST_CHECKED : BST_UNCHECKED, 0);
+    }
+}
+
+bool ControlPanel::FrameGenEnabled() const
+{
+    return frameGenCheck_ &&
+           SendMessageW(frameGenCheck_, BM_GETCHECK, 0, 0) == BST_CHECKED;
+}
+
+int ControlPanel::FrameGenMultiplier() const
+{
+    if (!frameGenMultiplierCombo_) return 2;
+    const LRESULT sel = SendMessageW(frameGenMultiplierCombo_, CB_GETCURSEL, 0, 0);
+    return sel < 0 ? 2 : static_cast<int>(sel) + 2;
+}
+
+void ControlPanel::SetFrameGenSettings(bool enabled, int multiplier)
+{
+    if (frameGenCheck_) {
+        SendMessageW(
+            frameGenCheck_, BM_SETCHECK,
+            enabled ? BST_CHECKED : BST_UNCHECKED, 0);
+    }
+    if (frameGenMultiplierCombo_) {
+        const int sel = std::clamp(multiplier, 2, 4) - 2;
+        SendMessageW(frameGenMultiplierCombo_, CB_SETCURSEL, sel, 0);
     }
 }
 
