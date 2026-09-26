@@ -734,13 +734,23 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             continue;
         }
 
+        // Latest-frame capture intentionally drops source frames whenever
+        // processing is slower than the monitor cadence. A skipped source frame
+        // is NOT a temporal discontinuity: resetting DLSS-NR on every skip made
+        // a 60 Hz source at ~30 rendered FPS reset neural history every frame.
         const bool dropped =
             latest.drainedFrames > 1 ||
             (lastSequence != 0 && latest.sequence != lastSequence + 1);
 
+        const auto captureGap = latest.capturedAt - previousFrameTime;
+        const bool temporalDiscontinuity =
+            lastSequence != 0 &&
+            (captureGap > std::chrono::milliseconds(250) ||
+             latest.sequence > lastSequence + 30);
+
         const HistoryReset reset =
             forceReset ? HistoryReset::FirstFrame :
-            (dropped ? HistoryReset::Drop : HistoryReset::None);
+            (temporalDiscontinuity ? HistoryReset::Drop : HistoryReset::None);
 
         FrameIdentity id{};
         id.frameNumber = latest.sequence ? latest.sequence - 1 : 0;
