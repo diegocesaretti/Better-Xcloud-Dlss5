@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cwchar>
+#include <iterator>
 #include <memory>
 #include <sstream>
 #include <string>
