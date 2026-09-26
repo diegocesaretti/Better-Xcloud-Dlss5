@@ -40,6 +40,9 @@ public:
     bool NrUpscalingEnabled() const;
     void SetRendererSettings(bool firstOption, bool secondOption);
     void SetBackendMode(bool optiScalerDirect);
+    bool FrameGenEnabled() const;
+    int FrameGenMultiplier() const;
+    void SetFrameGenSettings(bool enabled, int multiplier);
 
 private:
     explicit ControlPanel(HINSTANCE instance) : instance_(instance) {}
@@ -65,6 +68,8 @@ private:
     HWND secondaryConfigButton_{};
     HWND rawConfigButton_{};
     HWND settingsHint_{};
+    HWND frameGenCheck_{};
+    HWND frameGenMultiplierCombo_{};
     HFONT font_{};
     bool alive_{true};
     bool running_{false};
