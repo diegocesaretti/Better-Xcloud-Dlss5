@@ -16,6 +16,7 @@ enum class ControlPanelCommand {
     OpenReShadeConfig,
     OpenOptiScalerConfig,
     OpenBackendMenu,
+    OpenNrTuner,
     CopyDiagnostics,
     SaveSettings,
     Close
@@ -62,6 +63,7 @@ private:
     HWND nrUpscalingCheck_{};
     HWND backendConfigButton_{};
     HWND secondaryConfigButton_{};
+    HWND rawConfigButton_{};
     HWND settingsHint_{};
     HFONT font_{};
     bool alive_{true};
