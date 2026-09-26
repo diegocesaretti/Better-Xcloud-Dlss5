@@ -634,6 +634,19 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         L". Minimize this panel while playing. The target application keeps all input.");
     panel->SetMirrorVisible(true);
 
+    const bool sessionFrameGenEnabled =
+        optiScalerDirect &&
+        GetPrivateProfileIntW(
+            L"FrameGen", L"Enabled", 1, activeConfigPath.c_str()) != 0;
+    const int sessionFrameGenMultiplier =
+        optiScalerDirect
+            ? std::clamp(
+                  static_cast<int>(GetPrivateProfileIntW(
+                      L"XeFG", L"InterpolationCount", 1, activeConfigPath.c_str())) + 1,
+                  2,
+                  4)
+            : 1;
+
 
     // Mirror mode is strictly observational: never activate, focus, subclass or
     // synthesize input into the target. Xbox App/Chrome owns keyboard/mouse/gamepad.
@@ -928,8 +941,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                 : 0.0;
 
             liveLog << std::fixed << std::setprecision(2)
-                    << "fps=" << fps
+                    << "baseFps=" << fps
                     << " captureArrivalFps=" << captureArrivalFps
+                    << " frameGenConfigured=" << (sessionFrameGenEnabled ? 1 : 0)
+                    << " frameGenMultiplier=" << sessionFrameGenMultiplier
                     << " avgProcessingMs=" << avgMs
                     << " neuralGpuMs=" << renderer->LastNeuralGpuMs()
                     << " droppedCaptureFrames=" << statsDroppedFrames
@@ -946,14 +961,25 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                   << L"DLSS carrier: active\r\n"
                   << L"Capture mode: " << captureMode << L"\r\n"
                   << L"Capture arrivals: " << captureArrivalFps << L" fps\r\n"
-                  << L"Rendered mirror: " << fps << L" fps\r\n"
+                  << L"Base rendered FPS: " << fps << L"\r\n"
+                  << L"XeFG: "
+                  << (sessionFrameGenEnabled
+                        ? (L"configured " + std::to_wstring(sessionFrameGenMultiplier) + L"x")
+                        : L"off")
+                  << L"\r\n"
+                  << L"Nominal generated FPS*: "
+                  << (sessionFrameGenEnabled
+                        ? fps * static_cast<double>(sessionFrameGenMultiplier)
+                        : fps)
+                  << L"\r\n"
                   << L"Average processing: " << avgMs << L" ms\r\n"
                   << L"Neural GPU: " << renderer->LastNeuralGpuMs() << L" ms\r\n"
                   << L"Dropped capture frames: " << statsDroppedFrames << L"\r\n"
                   << L"Peak VRAM: " << renderer->PeakLocalVideoMemoryMiB() << L" MiB\r\n"
                   << L"DLSS evaluations: " << renderer->DLSSEvaluations() << L"\r\n"
                   << L"XInput controllers visible to host: " << xinputControllers << L"\r\n"
-                  << L"Target foreground: " << (TargetHasFocus(browser.hwnd) ? L"yes" : L"no");
+                  << L"Target foreground: " << (TargetHasFocus(browser.hwnd) ? L"yes" : L"no")
+                  << L"\r\n*Nominal FG FPS is base FPS × multiplier; OptiScaler/XeFG owns actual presentation.";
             panel->SetStats(stats.str());
 
             diagnosticsText =
