@@ -718,7 +718,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                             : ModuleDirectory() / L"ReShade.ini",
                         optiScalerDirect,
                         panel->NeuralUpliftEnabled(),
-                        panel->NrUpscalingEnabled())) {
+                        panel->NrUpscalingEnabled(),
+                        panel->FrameGenEnabled(),
+                        panel->FrameGenMultiplier())) {
                     panel->SetStatus(
                         L"Renderer settings saved. Stop and relaunch the mirror to apply them.");
                 } else {
