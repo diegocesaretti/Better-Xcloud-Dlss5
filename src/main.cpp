@@ -241,7 +241,9 @@ bool SaveRendererSettings(
     const std::filesystem::path& configPath,
     bool optiScalerDirect,
     bool firstOption,
-    bool secondOption)
+    bool secondOption,
+    bool frameGenEnabled,
+    int frameGenMultiplier)
 {
     if (optiScalerDirect) {
         const bool a = WritePrivateProfileStringW(
@@ -254,7 +256,43 @@ bool SaveRendererSettings(
             L"RunBeforeSR",
             secondOption ? L"true" : L"false",
             configPath.c_str()) != FALSE;
-        return a && b;
+
+        const bool c = WritePrivateProfileStringW(
+            L"FrameGen",
+            L"Enabled",
+            frameGenEnabled ? L"true" : L"false",
+            configPath.c_str()) != FALSE;
+        const bool d = WritePrivateProfileStringW(
+            L"FrameGen",
+            L"FGInput",
+            L"upscaler",
+            configPath.c_str()) != FALSE;
+        const bool e = WritePrivateProfileStringW(
+            L"FrameGen",
+            L"FGOutput",
+            L"xefg",
+            configPath.c_str()) != FALSE;
+
+        const int interpolationCount =
+            std::clamp(frameGenMultiplier, 2, 4) - 1;
+        const std::wstring interpolation =
+            std::to_wstring(interpolationCount);
+        const bool f = WritePrivateProfileStringW(
+            L"XeFG",
+            L"InterpolationCount",
+            interpolation.c_str(),
+            configPath.c_str()) != FALSE;
+
+        // Our mirror contains the already-composited xCloud HUD. There is no
+        // useful HUD-less game render target for OptiFG to discover, so avoid
+        // the expensive resource-tracking path by default.
+        const bool g = WritePrivateProfileStringW(
+            L"OptiFG",
+            L"DisableHUDFix",
+            L"true",
+            configPath.c_str()) != FALSE;
+
+        return a && b && c && d && e && f && g;
     }
 
     const bool a = WritePrivateProfileStringW(
@@ -283,6 +321,17 @@ void LoadRendererSettings(
             GetPrivateProfileIntW(
                 L"DlssNr", L"RunBeforeSR", 0, configPath.c_str()) != 0;
         panel.SetRendererSettings(enabled, runBefore);
+
+        const bool fgEnabled =
+            GetPrivateProfileIntW(
+                L"FrameGen", L"Enabled", 1, configPath.c_str()) != 0;
+        const int interpolationCount =
+            std::clamp(
+                static_cast<int>(GetPrivateProfileIntW(
+                    L"XeFG", L"InterpolationCount", 1, configPath.c_str())),
+                1,
+                3);
+        panel.SetFrameGenSettings(fgEnabled, interpolationCount + 1);
         return;
     }
 
@@ -293,6 +342,7 @@ void LoadRendererSettings(
         GetPrivateProfileIntW(
             L"RenoDX.DLSS5", L"NREnableUpscaling", 0, configPath.c_str()) != 0;
     panel.SetRendererSettings(neuralUplift, nrUpscaling);
+    panel.SetFrameGenSettings(false, 2);
 }
 
 bool WaitForFirstFrame(WindowCapture& capture, CapturedFrame& frame)
@@ -419,7 +469,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
                         activeConfigPath,
                         optiScalerDirect,
                         panel->NeuralUpliftEnabled(),
-                        panel->NrUpscalingEnabled())) {
+                        panel->NrUpscalingEnabled(),
+                        panel->FrameGenEnabled(),
+                        panel->FrameGenMultiplier())) {
                     panel->SetStatus(
                         L"Renderer settings saved. They will apply the next time the mirror starts.");
                 } else {
