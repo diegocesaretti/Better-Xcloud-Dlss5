@@ -17,6 +17,7 @@ constexpr int kIdCopyDiagnostics = 1008;
 constexpr int kIdNeuralUplift = 1009;
 constexpr int kIdNrUpscaling = 1010;
 constexpr int kIdSaveSettings = 1011;
+constexpr int kIdRawConfig = 1012;
 
 HWND MakeControl(
     DWORD exStyle,
@@ -146,12 +147,16 @@ bool ControlPanel::Initialize()
         0, L"BUTTON", L"OptiScaler.ini",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
         150, 425, 120, 32, hwnd_, kIdOpenOptiScaler);
+    rawConfigButton_ = MakeControl(
+        0, L"BUTTON", L"Raw INI",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        280, 425, 95, 32, hwnd_, kIdRawConfig);
 
     MakeControl(
         0, L"STATIC",
         L"Mirror mode never injects input into Xbox App/Chrome. Use this window only when you want to configure or debug; minimize it while playing.",
         WS_CHILD | WS_VISIBLE | SS_LEFT,
-        290, 423, 300, 52, hwnd_, 0);
+        390, 423, 200, 52, hwnd_, 0);
 
     MakeControl(0, L"STATIC", L"Renderer settings (next launch)",
                 WS_CHILD | WS_VISIBLE,
@@ -283,14 +288,17 @@ void ControlPanel::SetBackendMode(bool optiScalerDirect)
     if (backendConfigButton_) {
         SetWindowTextW(
             backendConfigButton_,
-            optiScalerDirect ? L"OptiScaler.ini" : L"ReShade.ini");
+            optiScalerDirect ? L"NR Tuning..." : L"ReShade.ini");
     }
     optiScalerDirect_ = optiScalerDirect;
     if (secondaryConfigButton_) {
         ShowWindow(secondaryConfigButton_, SW_SHOW);
         SetWindowTextW(
             secondaryConfigButton_,
-            optiScalerDirect ? L"Open NR menu" : L"OptiScaler.ini");
+            optiScalerDirect ? L"Native menu" : L"OptiScaler.ini");
+    }
+    if (rawConfigButton_) {
+        ShowWindow(rawConfigButton_, optiScalerDirect ? SW_SHOW : SW_HIDE);
     }
     if (settingsHint_) {
         SetWindowTextW(
@@ -328,12 +336,17 @@ LRESULT ControlPanel::HandleMessage(
                     case kIdStop: Queue(ControlPanelCommand::Stop); return 0;
                     case kIdToggle: Queue(ControlPanelCommand::ToggleMirror); return 0;
                     case kIdOpenLogs: Queue(ControlPanelCommand::OpenLogs); return 0;
-                    case kIdOpenReShade: Queue(ControlPanelCommand::OpenReShadeConfig); return 0;
+                    case kIdOpenReShade:
+                        Queue(optiScalerDirect_
+                            ? ControlPanelCommand::OpenNrTuner
+                            : ControlPanelCommand::OpenReShadeConfig);
+                        return 0;
                     case kIdOpenOptiScaler:
                         Queue(optiScalerDirect_
                             ? ControlPanelCommand::OpenBackendMenu
                             : ControlPanelCommand::OpenOptiScalerConfig);
                         return 0;
+                    case kIdRawConfig: Queue(ControlPanelCommand::OpenOptiScalerConfig); return 0;
                     case kIdCopyDiagnostics: Queue(ControlPanelCommand::CopyDiagnostics); return 0;
                     case kIdSaveSettings: Queue(ControlPanelCommand::SaveSettings); return 0;
                     default: break;
