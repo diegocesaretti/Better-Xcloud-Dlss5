@@ -285,8 +285,12 @@ void ControlPanel::SetBackendMode(bool optiScalerDirect)
             backendConfigButton_,
             optiScalerDirect ? L"OptiScaler.ini" : L"ReShade.ini");
     }
+    optiScalerDirect_ = optiScalerDirect;
     if (secondaryConfigButton_) {
-        ShowWindow(secondaryConfigButton_, optiScalerDirect ? SW_HIDE : SW_SHOW);
+        ShowWindow(secondaryConfigButton_, SW_SHOW);
+        SetWindowTextW(
+            secondaryConfigButton_,
+            optiScalerDirect ? L"Open NR menu" : L"OptiScaler.ini");
     }
     if (settingsHint_) {
         SetWindowTextW(
@@ -325,7 +329,11 @@ LRESULT ControlPanel::HandleMessage(
                     case kIdToggle: Queue(ControlPanelCommand::ToggleMirror); return 0;
                     case kIdOpenLogs: Queue(ControlPanelCommand::OpenLogs); return 0;
                     case kIdOpenReShade: Queue(ControlPanelCommand::OpenReShadeConfig); return 0;
-                    case kIdOpenOptiScaler: Queue(ControlPanelCommand::OpenOptiScalerConfig); return 0;
+                    case kIdOpenOptiScaler:
+                        Queue(optiScalerDirect_
+                            ? ControlPanelCommand::OpenBackendMenu
+                            : ControlPanelCommand::OpenOptiScalerConfig);
+                        return 0;
                     case kIdCopyDiagnostics: Queue(ControlPanelCommand::CopyDiagnostics); return 0;
                     case kIdSaveSettings: Queue(ControlPanelCommand::SaveSettings); return 0;
                     default: break;
