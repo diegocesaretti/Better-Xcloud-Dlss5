@@ -15,7 +15,8 @@ Experimental Windows bridge that applies the **DLSS 5 neural-rendering pipeline 
 - The mirror never injects controller, keyboard or mouse input into the selected target.
 - Live FPS, processing time, neural GPU time, VRAM, dropped frames and DLSS evaluation counters.
 - One-click access to logs, ReShade.ini, OptiScaler.ini and clipboard diagnostics.
-- Basic Neural Uplift / NR Upscaling settings without opening an injected overlay.
+- Full DLSS-NR tuning window with sliders/dropdowns for the documented neural parameters.
+- XeFG frame generation through OptiFG when the new OptiScaler NR pack is installed. The direct-NR route defaults to **2x XeFG** (`FGInput=upscaler`, `FGOutput=xefg`); the Control & Debug panel can disable it or select 2x/3x/4x.
 - No redistribution of the experimental neural runtime from this repository.
 
 ## How it works
