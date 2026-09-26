@@ -33,6 +33,8 @@ add_executable(XCloudDLSS5Host WIN32
     src/main.cpp
     src/ControlPanel.cpp
     src/ControlPanel.h
+    src/NrTuningDialog.cpp
+    src/NrTuningDialog.h
     src/WindowFinder.cpp
     src/WindowFinder.h
     src/WindowCapture.cpp
@@ -71,7 +73,7 @@ target_link_directories(XCloudDLSS5Host PRIVATE "${DLSS_LIB_DIR}")
 
 target_link_libraries(XCloudDLSS5Host PRIVATE
     d3d11 d3d12 dxgi dxguid d3dcompiler
-    user32 gdi32 dwmapi shell32 shlwapi ole32 version
+    user32 gdi32 dwmapi shell32 shlwapi ole32 version comctl32
     xinput9_1_0 winmm winhttp windowsapp
     ${DLSS_NGX_LIBRARY}
 )
