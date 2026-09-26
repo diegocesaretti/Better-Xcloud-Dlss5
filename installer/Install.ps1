@@ -206,9 +206,9 @@ public static class BetterXcloudIni {
             @('DlssNr', 'Passes', '1'),
             @('DlssNr', 'WorkingScale', '0.50'),
             @('DlssNr', 'AutoCapture', 'true'),
-            @('Menu', 'OverlayMenu', 'false'),
-            @('Menu', 'ShortcutKey', '-1'),
-            @('Hotfix', 'ManualInputPolling', 'false'),
+            @('Menu', 'OverlayMenu', 'true'),
+            @('Menu', 'ShortcutKey', '0x2D'),
+            @('Hotfix', 'ManualInputPolling', 'true'),
             @('Hotfix', 'PreferDedicatedGpu', 'true'),
             @('Log', 'LogToFile', 'true'),
             @('Log', 'LogLevel', '2'),
@@ -238,6 +238,9 @@ Initial NR settings:
   RunBeforeSR=false
   Passes=1
   WorkingScale=0.50
+  OverlayMenu=true
+  ShortcutKey=0x2D (Insert)
+  ManualInputPolling=true
 "@ | Set-Content -LiteralPath (Join-Path $InstallRoot 'NEURAL_BACKEND_INFO.txt') -Encoding UTF8
 
         Write-Host 'OptiScaler direct-NR backend enabled. RenoDX/ReShade path disabled.' -ForegroundColor Green
