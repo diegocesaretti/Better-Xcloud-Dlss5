@@ -15,6 +15,7 @@ enum class ControlPanelCommand {
     OpenLogs,
     OpenReShadeConfig,
     OpenOptiScalerConfig,
+    OpenBackendMenu,
     CopyDiagnostics,
     SaveSettings,
     Close
@@ -66,5 +67,6 @@ private:
     bool alive_{true};
     bool running_{false};
     bool mirrorVisible_{true};
+    bool optiScalerDirect_{false};
     ControlPanelCommand pending_{ControlPanelCommand::None};
 };
